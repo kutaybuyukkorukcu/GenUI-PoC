@@ -1,0 +1,15 @@
+# Docker ignore file for backend
+**/bin/
+**/obj/
+**/out/
+**/.vs/
+**/.vscode/
+**/node_modules/
+**/wwwroot/
+client/
+*.md
+.git/
+.gitignore
+*.db
+*.db-shm
+*.db-wal

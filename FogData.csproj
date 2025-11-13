@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <SpaRoot>client\</SpaRoot>
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.11" />
+  </ItemGroup>
+
+  <!-- Include React client files in the build -->
+  <ItemGroup>
+    <Content Include="client\**" Exclude="client\node_modules\**;client\dist\**" />
+  </ItemGroup>
+
+  <!-- Build React app during publish (only when not in Docker) -->
+  <Target Name="PublishReactApp" AfterTargets="ComputeFilesToPublish" Condition="'$(DOTNET_RUNNING_IN_CONTAINER)' != 'true'">
+    <Exec WorkingDirectory="$(SpaRoot)" Command="npm install" />
+    <Exec WorkingDirectory="$(SpaRoot)" Command="npm run build" />
+  </Target>
+
+</Project>

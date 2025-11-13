@@ -1,0 +1,37 @@
+version: '3.8'
+
+# Development overrides - only used when running `docker-compose up` (not in production)
+services:
+  backend:
+    # Override the production build with development setup
+    build:
+      context: .
+      dockerfile: Dockerfile.dev  # We'll create this
+    ports:
+      - "5001:8080"  # Keep same external port as production
+    volumes:
+      # Mount source code for hot reload
+      - .:/src
+      - /src/bin
+      - /src/obj
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - DOTNET_USE_POLLING_FILE_WATCHER=1  # Better file watching in containers
+    command: ["dotnet", "watch", "run", "--urls", "http://+:8080"]
+
+  frontend:
+    # Override with development server
+    build:
+      context: ./client
+      dockerfile: Dockerfile.dev  # We'll create this
+    volumes:
+      # Mount source code for hot reload
+      - ./client:/app
+      - /app/node_modules  # Don't mount node_modules
+    ports:
+      - "5173:5173"  # Vite dev server port
+    environment:
+      - NODE_ENV=development
+      - DOCKER_CONTAINER=true  # Signal that we're running in Docker
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

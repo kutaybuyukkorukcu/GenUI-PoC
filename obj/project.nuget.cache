@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "WL3EihIy4cw=",
+  "success": true,
+  "projectFilePath": "/Users/kutaybuyukkorukcu/Documents/Github/fogdata/FogData/FogData.csproj",
+  "expectedPackageFiles": [
+    "/Users/kutaybuyukkorukcu/.nuget/packages/microsoft.aspnetcore.openapi/9.0.11/microsoft.aspnetcore.openapi.9.0.11.nupkg.sha512",
+    "/Users/kutaybuyukkorukcu/.nuget/packages/microsoft.openapi/1.6.17/microsoft.openapi.1.6.17.nupkg.sha512"
+  ],
+  "logs": []
+}

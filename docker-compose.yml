@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fogdata-backend
+    ports:
+      - "5001:8080"  # Changed from 5000 to 5001
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+    networks:
+      - fogdata-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/weatherforecast"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: fogdata-frontend
+    ports:
+      - "3001:80"  # Changed from 3000 to 3001
+    depends_on:
+      - backend
+    networks:
+      - fogdata-network
+    environment:
+      - NODE_ENV=production
+
+networks:
+  fogdata-network:
+    driver: bridge
+
+volumes:
+  fogdata-data:
