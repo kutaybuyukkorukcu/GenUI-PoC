@@ -1,6 +1,25 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fogdata-postgres
+    environment:
+      POSTGRES_DB: fogdata
+      POSTGRES_USER: fogdata_user
+      POSTGRES_PASSWORD: fogdata_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - fogdata-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fogdata_user -d fogdata"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: .
@@ -11,6 +30,10 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=fogdata;Username=fogdata_user;Password=fogdata_password
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - fogdata-network
     healthcheck:
@@ -40,3 +63,4 @@ networks:
 
 volumes:
   fogdata-data:
+  postgres_data:

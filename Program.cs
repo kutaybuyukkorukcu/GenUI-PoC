@@ -1,8 +1,19 @@
+using FogData.Database;
+using FogData.Services;
+using Microsoft.EntityFrameworkCore;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+
+// Add DbContext
+builder.Services.AddDbContext<FogDataDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Add Agent Service
+builder.Services.AddScoped<IAgentService, AgentService>();
 
 // Add CORS
 builder.Services.AddCors(options =>
@@ -17,6 +28,14 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// Run migrations and seed data
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<FogDataDbContext>();
+    await context.Database.MigrateAsync();
+    await DataSeeder.SeedAsync(context);
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

@@ -2,6 +2,10 @@ version: '3.8'
 
 # Development overrides - only used when running `docker-compose up` (not in production)
 services:
+  postgres:
+    ports:
+      - "5432:5432"  # Expose for local DB tools
+
   backend:
     # Override the production build with development setup
     build:
@@ -18,6 +22,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
       - DOTNET_USE_POLLING_FILE_WATCHER=1  # Better file watching in containers
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=fogdata;Username=fogdata_user;Password=fogdata_password
     command: ["dotnet", "watch", "run", "--urls", "http://+:8080"]
 
   frontend:
