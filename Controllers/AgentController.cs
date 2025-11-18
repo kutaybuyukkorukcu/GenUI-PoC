@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using FogData.Services;
+using System.Text.Json;
+using System.Text;
 
 namespace FogData.Controllers;
 
@@ -14,59 +16,65 @@ public class AgentController : ControllerBase
         _agentService = agentService;
     }
 
-    [HttpPost("analyze")]
-    public async Task<IActionResult> AnalyzeIntent([FromBody] AnalyzeRequest request)
+    [HttpPost("chat")]
+    public async Task ChatStream([FromBody] ChatRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.UserInput))
+        if (string.IsNullOrWhiteSpace(request.Message))
         {
-            return BadRequest("User input is required");
+            Response.StatusCode = 400;
+            await Response.WriteAsync("Message is required");
+            return;
         }
 
-        var response = await _agentService.AnalyzeIntentAsync(request.UserInput);
-        return Ok(response);
+        Response.ContentType = "text/event-stream";
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("Connection", "keep-alive");
+
+        try
+        {
+            // Stream updates from the agent service
+            await foreach (var update in _agentService.ProcessUserMessageAsync(request.Message))
+            {
+                // Map StreamingChatUpdate type to SSE event type
+                var eventType = update.Type switch
+                {
+                    "tool-result" => "tool-result",
+                    "synthesis" => "message",
+                    "message" => "message",
+                    _ => "message"
+                };
+
+                // Prepare data based on update type
+                object data = update.Type switch
+                {
+                    "tool-result" => update.ToolResult!,
+                    "synthesis" => new { role = "assistant", content = update.Content },
+                    "message" => new { role = "assistant", content = update.Content },
+                    _ => new { content = update.Content }
+                };
+
+                await SendSSEEvent(eventType, data);
+            }
+
+            // Send completion event
+            await SendSSEEvent("done", new { success = true });
+        }
+        catch (Exception ex)
+        {
+            await SendSSEEvent("error", new { message = ex.Message });
+        }
     }
 
-    [HttpPost("execute")]
-    public async Task<IActionResult> ExecuteTool([FromBody] ExecuteRequest request)
+    private async Task SendSSEEvent(string eventType, object data)
     {
-        if (string.IsNullOrWhiteSpace(request.ToolName))
-        {
-            return BadRequest("Tool name is required");
-        }
-
-        var result = await _agentService.ExecuteToolAsync(request.ToolName, request.Parameters ?? new Dictionary<string, object>());
-        return Ok(result);
-    }
-
-    [HttpPost("process")]
-    public async Task<IActionResult> ProcessUserRequest([FromBody] AnalyzeRequest request)
-    {
-        if (string.IsNullOrWhiteSpace(request.UserInput))
-        {
-            return BadRequest("User input is required");
-        }
-
-        // Step 1: Analyze intent
-        var analysis = await _agentService.AnalyzeIntentAsync(request.UserInput);
-
-        // Step 2: Execute the tool
-        var result = await _agentService.ExecuteToolAsync(analysis.ToolToCall, analysis.Parameters);
-
-        return Ok(new
-        {
-            Analysis = analysis,
-            Result = result
-        });
+        var json = JsonSerializer.Serialize(data);
+        var message = $"event: {eventType}\ndata: {json}\n\n";
+        await Response.WriteAsync(message);
+        await Response.Body.FlushAsync();
     }
 }
 
-public record AnalyzeRequest
+public record ChatRequest
 {
-    public string UserInput { get; init; } = string.Empty;
-}
-
-public record ExecuteRequest
-{
-    public string ToolName { get; init; } = string.Empty;
-    public Dictionary<string, object>? Parameters { get; init; }
+    public string Message { get; init; } = string.Empty;
 }

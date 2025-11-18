@@ -6,6 +6,9 @@ using FogData.Database.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using FogData.Services;
+using System.Text.Json;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 
 namespace FogData.Services;
 
@@ -14,16 +17,24 @@ public class AgentService : IAgentService
     private readonly Kernel _kernel;
     private readonly FogDataDbContext _dbContext;
     private readonly IConfiguration _configuration;
+    private readonly ILogger<AgentService> _logger;
+    private readonly ChatHistory _chatHistory;
+    
+    // Track tool invocations for component rendering
+    private readonly List<ToolInvocationInfo> _toolInvocations = new();
 
-    public AgentService(FogDataDbContext dbContext, IConfiguration configuration)
+    public AgentService(FogDataDbContext dbContext, IConfiguration configuration, ILogger<AgentService> logger)
     {
         _dbContext = dbContext;
         _configuration = configuration;
+        _logger = logger;
+        _chatHistory = new ChatHistory();
 
         // Initialize Semantic Kernel with AI provider
         var builder = Kernel.CreateBuilder();
         
         var provider = _configuration["SemanticKernel:Provider"];
+        _logger.LogInformation("Initializing Semantic Kernel with provider: {Provider}", provider);
         
         if (provider == "OpenAI")
         {
@@ -32,7 +43,12 @@ public class AgentService : IAgentService
             
             if (!string.IsNullOrEmpty(apiKey))
             {
+                _logger.LogInformation("Configuring OpenAI with model: {ModelId}", modelId);
                 builder.AddOpenAIChatCompletion(modelId, apiKey);
+            }
+            else
+            {
+                _logger.LogWarning("OpenAI API key is empty");
             }
         }
         else if (provider == "AzureOpenAI")
@@ -41,9 +57,40 @@ public class AgentService : IAgentService
             var apiKey = _configuration["SemanticKernel:AzureOpenAI:ApiKey"];
             var deploymentName = _configuration["SemanticKernel:AzureOpenAI:DeploymentName"];
             
+            _logger.LogInformation("Configuring Azure OpenAI - Endpoint: {Endpoint}, Deployment: {Deployment}", 
+                endpoint, deploymentName);
+            
             if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(apiKey))
             {
+                _logger.LogInformation("Azure OpenAI API key length: {Length}", apiKey.Length);
                 builder.AddAzureOpenAIChatCompletion(deploymentName!, endpoint, apiKey);
+            }
+            else
+            {
+                _logger.LogError("Azure OpenAI configuration incomplete - Endpoint: {HasEndpoint}, ApiKey: {HasKey}", 
+                    !string.IsNullOrEmpty(endpoint), !string.IsNullOrEmpty(apiKey));
+            }
+        }
+        else if (provider == "Ollama")
+        {
+            var endpoint = _configuration["SemanticKernel:Ollama:Endpoint"];
+            var modelId = _configuration["SemanticKernel:Ollama:ModelId"] ?? "llama3.2";
+            
+            _logger.LogInformation("Configuring Ollama - Endpoint: {Endpoint}, Model: {ModelId}", 
+                endpoint, modelId);
+            
+            if (!string.IsNullOrEmpty(endpoint))
+            {
+                var ollamaUri = new Uri(endpoint);
+                builder.AddOpenAIChatCompletion(
+                    modelId: modelId,
+                    apiKey: null, // Ollama doesn't require API key
+                    endpoint: ollamaUri
+                );
+            }
+            else
+            {
+                _logger.LogError("Ollama endpoint is not configured");
             }
         }
         
@@ -51,6 +98,23 @@ public class AgentService : IAgentService
 
         // Register available tools
         RegisterTools();
+        
+        // Set system prompt
+        _chatHistory.AddSystemMessage($"""
+            You are a helpful AI assistant with access to tools for retrieving weather data, sales data, and sales performance metrics.
+            Current date: {DateTime.UtcNow:yyyy-MM-dd}
+            
+            When users ask for data:
+            1. Use the appropriate tool to fetch the information
+            2. After receiving the tool results, provide a natural, conversational summary
+            3. Highlight key insights and interesting patterns
+            4. Be concise but informative
+            
+            Available tools and when to use them:
+            - GetWeatherData: For weather-related queries about specific locations
+            - GetSalesData: For detailed sales transactions, filtered by region or date range
+            - GetTopSalesPeople: For sales performance rankings and top performers
+            """);
     }
 
     private void RegisterTools()
@@ -71,144 +135,117 @@ public class AgentService : IAgentService
                 _kernel.CreateFunctionFromMethod(
                     method: GetSalesDataAsync,
                     functionName: "GetSalesData",
-                    description: "Get sales data for analysis. Can filter by region, date range, or salesperson."
+                    description: "Get sales data for analysis. Can filter by region, date range, or salesperson. Returns detailed sales transactions."
                 ),
                 _kernel.CreateFunctionFromMethod(
                     method: GetTopSalesPeopleAsync,
                     functionName: "GetTopSalesPeople",
-                    description: "Get the top performing salespeople by total sales amount."
+                    description: "Get the top performing salespeople by total sales amount. Use this for sales rankings and performance comparisons."
                 )
             });
     }
 
-    public async Task<AgentResponse> AnalyzeIntentAsync(string userInput)
+    public async IAsyncEnumerable<StreamingChatUpdate> ProcessUserMessageAsync(string userInput)
     {
-        // Check if AI is configured
-        var chatCompletion = _kernel.GetRequiredService<IChatCompletionService>();
+        _logger.LogInformation("ProcessUserMessageAsync called with input: {Input}", userInput);
+        var cancellationToken = CancellationToken.None;
         
-        var prompt = $$$"""
-        You are an intelligent agent that analyzes user requests and determines which tool to call.
-
-        Available tools:
-        1. GetWeatherData - For weather-related queries (location, temperature, conditions)
-           Parameters: location (string)
+        // Clear previous tool invocations
+        _toolInvocations.Clear();
         
-        2. GetSalesData - For sales data queries (sales by region, product, date range)
-           Parameters: region (string, optional), startDate (string, optional), endDate (string, optional)
+        // Add user message to history
+        _chatHistory.AddUserMessage(userInput);
         
-        3. GetTopSalesPeople - For finding top performing salespeople by total sales amount
-           Parameters: limit (number, default: 5)
-
-        User input: "{{{userInput}}}"
-
-        Analyze the request and respond with ONLY a JSON object in this exact format:
+        // Get chat completion service
+        var chatCompletionService = _kernel.GetRequiredService<IChatCompletionService>();
+        
+        // Configure automatic function calling with a filter to track invocations
+        var executionSettings = new OpenAIPromptExecutionSettings
         {
-            "intent": "brief description of what user wants",
-            "toolToCall": "exact tool name from the list above",
-            "parameters": { "key": "value" },
-            "reasoning": "why this tool was chosen"
-        }
-        """;
+            ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
+            MaxTokens = 2000
+        };
 
-        var result = await _kernel.InvokePromptAsync(prompt);
-        var response = result.GetValue<string>();
+        // Create a filter to capture tool invocations
+        var kernelArguments = new KernelArguments(executionSettings);
+        
+        // Add function filter to track tool calls
+        _kernel.FunctionInvocationFilters.Add(new ToolTrackingFilter(_toolInvocations, _logger));
 
         try
         {
-            // Extract JSON from response (in case AI adds extra text)
-            var jsonStart = response!.IndexOf('{');
-            var jsonEnd = response.LastIndexOf('}');
-            if (jsonStart >= 0 && jsonEnd > jsonStart)
+            // Get streaming response
+            var response = chatCompletionService.GetStreamingChatMessageContentsAsync(
+                _chatHistory,
+                executionSettings,
+                _kernel,
+                cancellationToken);
+
+            var fullMessage = string.Empty;
+            var hasYieldedToolResults = false;
+
+            await foreach (var content in response.WithCancellation(cancellationToken))
             {
-                var jsonContent = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
-                var parsed = System.Text.Json.JsonSerializer.Deserialize<AgentResponse>(jsonContent);
-                return parsed ?? new AgentResponse
+                // Stream text content
+                if (!string.IsNullOrEmpty(content.Content))
                 {
-                    Intent = "unknown",
-                    ToolToCall = "none",
-                    Reasoning = "Failed to parse response"
-                };
+                    fullMessage += content.Content;
+                    
+                    // If we have tool invocations and haven't yielded them yet, do it before streaming text
+                    if (_toolInvocations.Count > 0 && !hasYieldedToolResults)
+                    {
+                        foreach (var toolInfo in _toolInvocations)
+                        {
+                            _logger.LogInformation("Yielding tool result for: {ToolName}", toolInfo.ToolName);
+                            
+                            yield return new StreamingChatUpdate
+                            {
+                                Type = "tool-result",
+                                ToolName = toolInfo.ToolName,
+                                ToolResult = new ToolCallResult
+                                {
+                                    Success = true,
+                                    Data = toolInfo.Result,
+                                    ComponentType = toolInfo.ComponentType
+                                },
+                                ComponentType = toolInfo.ComponentType
+                            };
+                        }
+                        hasYieldedToolResults = true;
+                    }
+                    
+                    // Stream synthesis text
+                    yield return new StreamingChatUpdate
+                    {
+                        Type = "synthesis",
+                        Content = content.Content
+                    };
+                }
+            }
+
+            // Add assistant response to history
+            if (!string.IsNullOrEmpty(fullMessage))
+            {
+                _chatHistory.AddAssistantMessage(fullMessage);
             }
             
-            return new AgentResponse
-            {
-                Intent = "unknown",
-                ToolToCall = "none",
-                Reasoning = "No JSON found in response"
-            };
+            _logger.LogInformation("Response complete. Message length: {Length}, Tool calls: {ToolCount}", 
+                fullMessage.Length, _toolInvocations.Count);
         }
-        catch (Exception ex)
+        finally
         {
-            return new AgentResponse
-            {
-                Intent = "unknown",
-                ToolToCall = "none",
-                Reasoning = $"Failed to parse AI response: {ex.Message}"
-            };
+            // Clean up the filter
+            _kernel.FunctionInvocationFilters.Clear();
         }
     }
 
-    public async Task<ToolCallResult> ExecuteToolAsync(string toolName, Dictionary<string, object> parameters)
+    // Tool implementations with return type annotations for Semantic Kernel
+    [Description("Get weather data for a specific location")]
+    private async Task<List<WeatherData>> GetWeatherDataAsync(
+        [Description("The location to get weather for")] string location)
     {
-        try
-        {
-            switch (toolName)
-            {
-                case "GetWeatherData":
-                    var weatherData = await GetWeatherDataAsync(
-                        parameters.GetValueOrDefault("location", "New York")?.ToString() ?? "New York");
-                    return new ToolCallResult
-                    {
-                        Success = true,
-                        Data = weatherData,
-                        ComponentType = "weather"
-                    };
-
-                case "GetSalesData":
-                    var salesData = await GetSalesDataAsync(
-                        parameters.GetValueOrDefault("region")?.ToString(),
-                        parameters.GetValueOrDefault("startDate")?.ToString(),
-                        parameters.GetValueOrDefault("endDate")?.ToString());
-                    return new ToolCallResult
-                    {
-                        Success = true,
-                        Data = salesData,
-                        ComponentType = "table"
-                    };
-
-                case "GetTopSalesPeople":
-                    var topPerformers = await GetTopSalesPeopleAsync(
-                        int.Parse(parameters.GetValueOrDefault("limit", "5")?.ToString() ?? "5"));
-                    return new ToolCallResult
-                    {
-                        Success = true,
-                        Data = topPerformers,
-                        ComponentType = "chart"
-                    };
-
-                default:
-                    return new ToolCallResult
-                    {
-                        Success = false,
-                        Error = $"Unknown tool: {toolName}",
-                        ComponentType = "error"
-                    };
-            }
-        }
-        catch (Exception ex)
-        {
-            return new ToolCallResult
-            {
-                Success = false,
-                Error = ex.Message,
-                ComponentType = "error"
-            };
-        }
-    }
-
-    // Tool implementations
-    private async Task<List<WeatherData>> GetWeatherDataAsync(string location)
-    {
+        _logger.LogInformation("GetWeatherDataAsync called with location: {Location}", location);
+        
         return await _dbContext.WeatherData
             .Where(w => w.Location.Contains(location))
             .OrderByDescending(w => w.Date)
@@ -216,8 +253,15 @@ public class AgentService : IAgentService
             .ToListAsync();
     }
 
-    private async Task<List<SalesData>> GetSalesDataAsync(string? region = null, string? startDate = null, string? endDate = null)
+    [Description("Get sales data with optional filters")]
+    private async Task<List<SalesData>> GetSalesDataAsync(
+        [Description("Optional region filter")] string? region = null,
+        [Description("Optional start date in YYYY-MM-DD format")] string? startDate = null,
+        [Description("Optional end date in YYYY-MM-DD format")] string? endDate = null)
     {
+        _logger.LogInformation("GetSalesDataAsync called - Region: {Region}, StartDate: {StartDate}, EndDate: {EndDate}", 
+            region, startDate, endDate);
+        
         var query = _dbContext.SalesData.AsQueryable();
 
         if (!string.IsNullOrEmpty(region))
@@ -236,8 +280,12 @@ public class AgentService : IAgentService
             .ToListAsync();
     }
 
-    private async Task<List<SalesPersonPerformance>> GetTopSalesPeopleAsync(int limit = 5)
+    [Description("Get top performing salespeople by total sales")]
+    private async Task<List<SalesPersonPerformance>> GetTopSalesPeopleAsync(
+        [Description("Number of top performers to return, default is 5")] int limit = 5)
     {
+        _logger.LogInformation("GetTopSalesPeopleAsync called with limit: {Limit}", limit);
+        
         return await _dbContext.SalesData
             .Include(s => s.SalesPerson)
             .GroupBy(s => s.SalesPerson)
@@ -251,6 +299,58 @@ public class AgentService : IAgentService
             .OrderByDescending(p => p.TotalSales)
             .Take(limit)
             .ToListAsync();
+    }
+}
+
+// Helper class to track tool invocations
+internal class ToolInvocationInfo
+{
+    public string ToolName { get; set; } = string.Empty;
+    public object? Arguments { get; set; }
+    public object? Result { get; set; }
+    public string ComponentType { get; set; } = string.Empty;
+}
+
+// Filter to capture tool invocations
+internal class ToolTrackingFilter : IFunctionInvocationFilter
+{
+    private readonly List<ToolInvocationInfo> _toolInvocations;
+    private readonly ILogger _logger;
+
+    public ToolTrackingFilter(List<ToolInvocationInfo> toolInvocations, ILogger logger)
+    {
+        _toolInvocations = toolInvocations;
+        _logger = logger;
+    }
+
+    public async Task OnFunctionInvocationAsync(FunctionInvocationContext context, Func<FunctionInvocationContext, Task> next)
+    {
+        // Let the function execute
+        await next(context);
+
+        // Capture the result
+        var toolName = context.Function.Name;
+        var result = context.Result?.GetValue<object>();
+
+        // Map tool name to component type
+        var componentType = toolName switch
+        {
+            "GetWeatherData" => "weather",
+            "GetSalesData" => "table",
+            "GetTopSalesPeople" => "chart",
+            _ => "unknown"
+        };
+
+        _logger.LogInformation("Tool invoked: {ToolName}, ComponentType: {ComponentType}, ResultType: {ResultType}", 
+            toolName, componentType, result?.GetType().Name ?? "null");
+
+        _toolInvocations.Add(new ToolInvocationInfo
+        {
+            ToolName = toolName,
+            Arguments = context.Arguments,
+            Result = result,
+            ComponentType = componentType
+        });
     }
 }
 

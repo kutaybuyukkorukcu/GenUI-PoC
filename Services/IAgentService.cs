@@ -1,19 +1,21 @@
 using FogData.Database.Entities;
+using Microsoft.SemanticKernel.ChatCompletion;
 
 namespace FogData.Services;
 
 public interface IAgentService
 {
-    Task<AgentResponse> AnalyzeIntentAsync(string userInput);
-    Task<ToolCallResult> ExecuteToolAsync(string toolName, Dictionary<string, object> parameters);
+    IAsyncEnumerable<StreamingChatUpdate> ProcessUserMessageAsync(string userInput);
 }
 
-public record AgentResponse
+public record StreamingChatUpdate
 {
-    public string Intent { get; init; } = string.Empty;
-    public string ToolToCall { get; init; } = string.Empty;
-    public Dictionary<string, object> Parameters { get; init; } = new();
-    public string Reasoning { get; init; } = string.Empty;
+    public string Type { get; init; } = string.Empty; // "message", "tool-call", "tool-result", "synthesis"
+    public string? Content { get; init; }
+    public string? ToolName { get; init; }
+    public object? ToolArguments { get; init; }
+    public object? ToolResult { get; init; }
+    public string? ComponentType { get; init; }
 }
 
 public record ToolCallResult

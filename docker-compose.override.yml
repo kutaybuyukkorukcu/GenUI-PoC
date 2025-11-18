@@ -23,6 +23,14 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       - DOTNET_USE_POLLING_FILE_WATCHER=1  # Better file watching in containers
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=fogdata;Username=fogdata_user;Password=fogdata_password
+      - SemanticKernel__Provider=${SEMANTIC_KERNEL_PROVIDER:-AzureOpenAI}
+      - SemanticKernel__OpenAI__ApiKey=${OPENAI_API_KEY}
+      - SemanticKernel__OpenAI__ModelId=${OPENAI_MODEL_ID:-gpt-4o-mini}
+      - SemanticKernel__AzureOpenAI__Endpoint=${AZURE_OPENAI_ENDPOINT}
+      - SemanticKernel__AzureOpenAI__ApiKey=${AZURE_OPENAI_API_KEY}
+      - SemanticKernel__AzureOpenAI__DeploymentName=${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4.1-mini}
+      - SemanticKernel__Ollama__Endpoint=${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
+      - SemanticKernel__Ollama__ModelId=${OLLAMA_MODEL_ID:-llama3.2}
     command: ["dotnet", "watch", "run", "--urls", "http://+:8080"]
 
   frontend:

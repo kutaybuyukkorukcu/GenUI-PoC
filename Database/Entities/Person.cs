@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace FogData.Database.Entities;
 
 public class Person
@@ -12,6 +14,7 @@ public class Person
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
-    // Navigation property
+    // Navigation property - ignored during JSON serialization to prevent cycles
+    [JsonIgnore]
     public virtual ICollection<SalesData> Sales { get; set; } = new List<SalesData>();
 }
