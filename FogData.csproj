@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <SpaRoot>client\</SpaRoot>
     <EnableDefaultContentItems>false</EnableDefaultContentItems>
+    <!-- Suppress Semantic Kernel experimental API warnings -->
+    <NoWarn>$(NoWarn);SKEXP0010</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

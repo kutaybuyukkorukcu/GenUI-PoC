@@ -76,17 +76,22 @@ public class AgentService : IAgentService
             var endpoint = _configuration["SemanticKernel:Ollama:Endpoint"];
             var modelId = _configuration["SemanticKernel:Ollama:ModelId"] ?? "llama3.2";
             
-            _logger.LogInformation("Configuring Ollama - Endpoint: {Endpoint}, Model: {ModelId}", 
+            _logger.LogInformation("Configuring Ollama - Endpoint: '{Endpoint}', Model: '{ModelId}'", 
                 endpoint, modelId);
             
             if (!string.IsNullOrEmpty(endpoint))
             {
                 var ollamaUri = new Uri(endpoint);
+                _logger.LogInformation("Parsed Ollama URI - Scheme: {Scheme}, Host: {Host}, Port: {Port}, Path: {Path}, AbsoluteUri: {AbsoluteUri}", 
+                    ollamaUri.Scheme, ollamaUri.Host, ollamaUri.Port, ollamaUri.AbsolutePath, ollamaUri.AbsoluteUri);
+                
                 builder.AddOpenAIChatCompletion(
                     modelId: modelId,
                     apiKey: null, // Ollama doesn't require API key
                     endpoint: ollamaUri
                 );
+                
+                _logger.LogInformation("OpenAI chat completion client added for Ollama");
             }
             else
             {
@@ -155,9 +160,11 @@ public class AgentService : IAgentService
         
         // Add user message to history
         _chatHistory.AddUserMessage(userInput);
+        _logger.LogInformation("Added user message to chat history. Total messages: {Count}", _chatHistory.Count);
         
         // Get chat completion service
         var chatCompletionService = _kernel.GetRequiredService<IChatCompletionService>();
+        _logger.LogInformation("Chat completion service obtained: {ServiceType}", chatCompletionService.GetType().Name);
         
         // Configure automatic function calling with a filter to track invocations
         var executionSettings = new OpenAIPromptExecutionSettings
@@ -165,78 +172,94 @@ public class AgentService : IAgentService
             ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
             MaxTokens = 2000
         };
+        
+        _logger.LogInformation("Execution settings configured with AutoInvokeKernelFunctions");
 
         // Create a filter to capture tool invocations
         var kernelArguments = new KernelArguments(executionSettings);
         
         // Add function filter to track tool calls
         _kernel.FunctionInvocationFilters.Add(new ToolTrackingFilter(_toolInvocations, _logger));
+        _logger.LogInformation("Tool tracking filter added");
 
-        try
+        _logger.LogInformation("Starting streaming chat completion...");
+        
+        // Get streaming response
+        var response = chatCompletionService.GetStreamingChatMessageContentsAsync(
+            _chatHistory,
+            executionSettings,
+            _kernel,
+            cancellationToken);
+
+        var fullMessage = string.Empty;
+        var hasYieldedToolResults = false;
+        var chunkCount = 0;
+
+        _logger.LogInformation("Beginning to iterate over streaming response...");
+        
+        await foreach (var content in response.WithCancellation(cancellationToken))
         {
-            // Get streaming response
-            var response = chatCompletionService.GetStreamingChatMessageContentsAsync(
-                _chatHistory,
-                executionSettings,
-                _kernel,
-                cancellationToken);
-
-            var fullMessage = string.Empty;
-            var hasYieldedToolResults = false;
-
-            await foreach (var content in response.WithCancellation(cancellationToken))
-            {
-                // Stream text content
-                if (!string.IsNullOrEmpty(content.Content))
-                {
-                    fullMessage += content.Content;
-                    
-                    // If we have tool invocations and haven't yielded them yet, do it before streaming text
-                    if (_toolInvocations.Count > 0 && !hasYieldedToolResults)
-                    {
-                        foreach (var toolInfo in _toolInvocations)
-                        {
-                            _logger.LogInformation("Yielding tool result for: {ToolName}", toolInfo.ToolName);
-                            
-                            yield return new StreamingChatUpdate
-                            {
-                                Type = "tool-result",
-                                ToolName = toolInfo.ToolName,
-                                ToolResult = new ToolCallResult
-                                {
-                                    Success = true,
-                                    Data = toolInfo.Result,
-                                    ComponentType = toolInfo.ComponentType
-                                },
-                                ComponentType = toolInfo.ComponentType
-                            };
-                        }
-                        hasYieldedToolResults = true;
-                    }
-                    
-                    // Stream synthesis text
-                    yield return new StreamingChatUpdate
-                    {
-                        Type = "synthesis",
-                        Content = content.Content
-                    };
-                }
-            }
-
-            // Add assistant response to history
-            if (!string.IsNullOrEmpty(fullMessage))
-            {
-                _chatHistory.AddAssistantMessage(fullMessage);
-            }
+            chunkCount++;
+            _logger.LogDebug("Received chunk #{Count}: Content={Content}, Role={Role}", 
+                chunkCount, 
+                content.Content?.Substring(0, Math.Min(50, content.Content?.Length ?? 0)),
+                content.Role);
             
-            _logger.LogInformation("Response complete. Message length: {Length}, Tool calls: {ToolCount}", 
-                fullMessage.Length, _toolInvocations.Count);
+            // Stream text content
+            if (!string.IsNullOrEmpty(content.Content))
+            {
+                fullMessage += content.Content;
+                
+                // If we have tool invocations and haven't yielded them yet, do it before streaming text
+                if (_toolInvocations.Count > 0 && !hasYieldedToolResults)
+                {
+                    _logger.LogInformation("Found {Count} tool invocations, yielding results", _toolInvocations.Count);
+                    
+                    foreach (var toolInfo in _toolInvocations)
+                    {
+                        _logger.LogInformation("Yielding tool result for: {ToolName}", toolInfo.ToolName);
+                        
+                        yield return new StreamingChatUpdate
+                        {
+                            Type = "tool-result",
+                            ToolName = toolInfo.ToolName,
+                            ToolResult = new ToolCallResult
+                            {
+                                Success = true,
+                                Data = toolInfo.Result,
+                                ComponentType = toolInfo.ComponentType
+                            },
+                            ComponentType = toolInfo.ComponentType
+                        };
+                    }
+                    hasYieldedToolResults = true;
+                    _logger.LogInformation("All tool results yielded");
+                }
+                
+                // Stream synthesis text
+                _logger.LogDebug("Yielding synthesis content: {Content}", content.Content);
+                yield return new StreamingChatUpdate
+                {
+                    Type = "synthesis",
+                    Content = content.Content
+                };
+            }
         }
-        finally
+
+        _logger.LogInformation("Stream iteration completed. Total chunks: {ChunkCount}", chunkCount);
+
+        // Clean up the filter
+        _kernel.FunctionInvocationFilters.Clear();
+        _logger.LogInformation("Tool tracking filter cleared");
+
+        // Add assistant response to history
+        if (!string.IsNullOrEmpty(fullMessage))
         {
-            // Clean up the filter
-            _kernel.FunctionInvocationFilters.Clear();
+            _chatHistory.AddAssistantMessage(fullMessage);
         }
+        
+        _logger.LogInformation("Response complete. Message length: {Length}, Tool calls: {ToolCount}, Chunks: {ChunkCount}", 
+            fullMessage.Length, _toolInvocations.Count, chunkCount);
     }
 
     // Tool implementations with return type annotations for Semantic Kernel

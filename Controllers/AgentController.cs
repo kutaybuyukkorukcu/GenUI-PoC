@@ -17,10 +17,13 @@ public class AgentController : ControllerBase
     }
 
     [HttpPost("chat")]
-    public async Task ChatStream([FromBody] ChatRequest request)
+    public async Task ChatStream([FromBody] ChatRequest request, ILogger<AgentController> logger)
     {
+        logger.LogInformation("ChatStream endpoint called with message: {Message}", request.Message);
+        
         if (string.IsNullOrWhiteSpace(request.Message))
         {
+            logger.LogWarning("Empty message received");
             Response.StatusCode = 400;
             await Response.WriteAsync("Message is required");
             return;
@@ -29,12 +32,19 @@ public class AgentController : ControllerBase
         Response.ContentType = "text/event-stream";
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("Connection", "keep-alive");
+        
+        logger.LogInformation("SSE headers set, starting to process message");
 
         try
         {
+            var updateCount = 0;
             // Stream updates from the agent service
             await foreach (var update in _agentService.ProcessUserMessageAsync(request.Message))
             {
+                updateCount++;
+                logger.LogInformation("Received update #{Count}: Type={Type}, Content={Content}, ToolName={ToolName}", 
+                    updateCount, update.Type, update.Content?.Substring(0, Math.Min(50, update.Content?.Length ?? 0)), update.ToolName);
+                
                 // Map StreamingChatUpdate type to SSE event type
                 var eventType = update.Type switch
                 {
@@ -53,24 +63,32 @@ public class AgentController : ControllerBase
                     _ => new { content = update.Content }
                 };
 
-                await SendSSEEvent(eventType, data);
+                logger.LogInformation("Sending SSE event: {EventType}", eventType);
+                await SendSSEEvent(eventType, data, logger);
             }
 
+            logger.LogInformation("Stream completed. Total updates sent: {Count}", updateCount);
             // Send completion event
-            await SendSSEEvent("done", new { success = true });
+            await SendSSEEvent("done", new { success = true }, logger);
         }
         catch (Exception ex)
         {
-            await SendSSEEvent("error", new { message = ex.Message });
+            logger.LogError(ex, "Error during chat stream processing");
+            await SendSSEEvent("error", new { message = ex.Message, stackTrace = ex.StackTrace }, logger);
         }
     }
 
-    private async Task SendSSEEvent(string eventType, object data)
+    private async Task SendSSEEvent(string eventType, object data, ILogger<AgentController> logger)
     {
         var json = JsonSerializer.Serialize(data);
         var message = $"event: {eventType}\ndata: {json}\n\n";
+        
+        logger.LogDebug("Sending SSE event: {EventType}, Data length: {Length}", eventType, json.Length);
+        
         await Response.WriteAsync(message);
         await Response.Body.FlushAsync();
+        
+        logger.LogDebug("SSE event sent and flushed");
     }
 }
 

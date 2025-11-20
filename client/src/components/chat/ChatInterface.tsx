@@ -19,18 +19,6 @@ export const ChatInterface = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  useEffect(() => {
-    // Auto-select the latest message with a tool result
-    const latestWithResult = [...messages]
-      .reverse()
-      .find((m) => m.toolResult && m.toolResult.success);
-    
-    if (latestWithResult && latestWithResult.id !== selectedMessage?.id) {
-      setSelectedMessage(latestWithResult);
-      setShowPreview(true);
-    }
-  }, [messages, selectedMessage?.id]);
-
   return (
     <div className="flex h-screen bg-background">
       {/* Chat Panel */}

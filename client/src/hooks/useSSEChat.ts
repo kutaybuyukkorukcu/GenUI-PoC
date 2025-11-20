@@ -40,23 +40,20 @@ export const useSSEChat = () => {
           const msgIndex = updated.findIndex((m) => m.id === assistantMessageId);
           
           if (msgIndex !== -1) {
-            const msg = updated[msgIndex];
+            const msg = { ...updated[msgIndex] };
             
             // Handle different event types
             if (data.eventType === 'message') {
-              msg.content = data.content || '';
+              // Append streaming text content
+              msg.content = (msg.content || '') + (data.content || '');
             } else if (data.eventType === 'analysis') {
               // This is an analysis event
               msg.analysis = data as AgentAnalysis;
               msg.content = `Understanding: ${data.Intent || data.intent}`;
             } else if (data.eventType === 'tool-result') {
-              // This is a tool result
+              // This is a tool result - store it but don't override content
               msg.toolResult = data as ToolCallResult;
-              if (data.Success || data.success) {
-                msg.content = 'Here are the results:';
-              } else {
-                msg.content = `Error: ${data.Error || data.error}`;
-              }
+              // Don't set content here - let the LLM's streaming response provide the natural language
             }
             
             updated[msgIndex] = msg;
