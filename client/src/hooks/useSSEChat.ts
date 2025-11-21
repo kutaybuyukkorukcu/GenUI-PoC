@@ -1,7 +1,10 @@
-import { AgentAnalysis, ChatMessage, ToolCallResult } from '../types';
+import { AgentAnalysis, ChatMessage, GenerativeUIResponse, ToolCallResult } from '../types';
 import { useCallback, useRef, useState } from 'react';
 
 import { chatWithAgentSSE } from '../services/api';
+
+// Feature flag to use Generative UI DSL
+const USE_GENERATIVE_UI = import.meta.env.VITE_USE_GENERATIVE_UI_DSL === 'true';
 
 export const useSSEChat = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -42,8 +45,22 @@ export const useSSEChat = () => {
           if (msgIndex !== -1) {
             const msg = { ...updated[msgIndex] };
             
-            // Handle different event types
-            if (data.eventType === 'message') {
+            // 🚀 NEW: Handle Generative UI DSL format
+            if (data.eventType === 'generative-ui' && USE_GENERATIVE_UI) {
+              try {
+                // Parse the JSON DSL response
+                const jsonResponse = JSON.parse(data.response);
+                msg.generativeUIResponse = jsonResponse as GenerativeUIResponse;
+                msg.isGenerativeUI = true;
+                msg.isStreaming = true;
+                msg.content = ''; // Clear content, we'll use generativeUIResponse instead
+              } catch (error) {
+                console.error('Failed to parse generative UI response:', error);
+                msg.content = 'Error parsing response';
+              }
+            }
+            // EXISTING: Handle legacy event types
+            else if (data.eventType === 'message') {
               // Append streaming text content
               msg.content = (msg.content || '') + (data.content || '');
             } else if (data.eventType === 'analysis') {

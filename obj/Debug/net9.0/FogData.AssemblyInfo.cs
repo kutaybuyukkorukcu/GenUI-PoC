@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("FogData")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e14626eaa8fefe219d91bc8fa1c94395449b7653")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3fb96fb9d9123fc85aaffd51b1bfb2041b8953eb")]
 [assembly: System.Reflection.AssemblyProductAttribute("FogData")]
 [assembly: System.Reflection.AssemblyTitleAttribute("FogData")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

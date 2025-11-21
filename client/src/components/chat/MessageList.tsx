@@ -1,6 +1,7 @@
 import { Bot, Loader2, User } from 'lucide-react';
 
 import type { ChatMessage } from '../../types';
+import { GenerativeUIRenderer } from '../renderers/GenerativeUIRenderer';
 import { cn } from '../../lib/utils';
 
 interface MessageListProps {
@@ -48,19 +49,30 @@ export const MessageList = ({ messages, onSelectMessage, selectedMessageId }: Me
               )}
             </div>
 
-            <div className="text-sm leading-relaxed">{message.content}</div>
+            {/* Render Generative UI DSL format */}
+            {message.isGenerativeUI && message.generativeUIResponse ? (
+              <GenerativeUIRenderer 
+                response={message.generativeUIResponse} 
+                isStreaming={message.isStreaming}
+              />
+            ) : (
+              <>
+                {/* Render legacy format */}
+                <div className="text-sm leading-relaxed">{message.content}</div>
 
-            {message.analysis && (
-              <div className="mt-2 rounded-md border border-dashed p-3 text-xs">
-                <p className="font-semibold">Analysis:</p>
-                <p className="text-muted-foreground">{message.analysis.reasoning}</p>
-              </div>
-            )}
+                {message.analysis && (
+                  <div className="mt-2 rounded-md border border-dashed p-3 text-xs">
+                    <p className="font-semibold">Analysis:</p>
+                    <p className="text-muted-foreground">{message.analysis.reasoning}</p>
+                  </div>
+                )}
 
-            {message.toolResult && onSelectMessage && (
-              <div className="mt-2 text-xs text-muted-foreground">
-                Click to view results →
-              </div>
+                {message.toolResult && onSelectMessage && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Click to view results →
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

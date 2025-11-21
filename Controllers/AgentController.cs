@@ -10,10 +10,17 @@ namespace FogData.Controllers;
 public class AgentController : ControllerBase
 {
     private readonly IAgentService _agentService;
+    private readonly IGenerativeUIService _generativeUIService;
+    private readonly IConfiguration _configuration;
 
-    public AgentController(IAgentService agentService)
+    public AgentController(
+        IAgentService agentService,
+        IGenerativeUIService generativeUIService,
+        IConfiguration configuration)
     {
         _agentService = agentService;
+        _generativeUIService = generativeUIService;
+        _configuration = configuration;
     }
 
     [HttpPost("chat")]
@@ -35,12 +42,32 @@ public class AgentController : ControllerBase
         
         logger.LogInformation("SSE headers set, starting to process message");
 
+        // 🚀 FEATURE FLAG: Choose implementation based on configuration
+        var useGenerativeUIDSL = _configuration.GetValue<bool>("Features:UseGenerativeUIDSL", false);
+        logger.LogInformation("Using Generative UI DSL: {UseGenerativeUI}", useGenerativeUIDSL);
+
         try
         {
-            var updateCount = 0;
-            // Stream updates from the agent service
-            await foreach (var update in _agentService.ProcessUserMessageAsync(request.Message))
+            if (useGenerativeUIDSL)
             {
+                // NEW IMPLEMENTATION: Generative UI with JSON DSL
+                logger.LogInformation("Using GenerativeUIService");
+                await foreach (var jsonResponse in _generativeUIService.ProcessUserMessageAsync(request.Message))
+                {
+                    logger.LogInformation("Sending GenerativeUI response, length: {Length}", jsonResponse.Length);
+                    await SendSSEEvent("generative-ui", new { response = jsonResponse }, logger);
+                }
+                
+                // Send completion
+                await SendSSEEvent("done", new { success = true }, logger);
+            }
+            else
+            {
+                // EXISTING IMPLEMENTATION: Tool-calling approach (UNCHANGED)
+                logger.LogInformation("Using legacy AgentService");
+                var updateCount = 0;
+                await foreach (var update in _agentService.ProcessUserMessageAsync(request.Message))
+                {
                 updateCount++;
                 logger.LogInformation("Received update #{Count}: Type={Type}, Content={Content}, ToolName={ToolName}", 
                     updateCount, update.Type, update.Content?.Substring(0, Math.Min(50, update.Content?.Length ?? 0)), update.ToolName);
@@ -63,13 +90,14 @@ public class AgentController : ControllerBase
                     _ => new { content = update.Content }
                 };
 
-                logger.LogInformation("Sending SSE event: {EventType}", eventType);
-                await SendSSEEvent(eventType, data, logger);
-            }
+                    logger.LogInformation("Sending SSE event: {EventType}", eventType);
+                    await SendSSEEvent(eventType, data, logger);
+                }
 
-            logger.LogInformation("Stream completed. Total updates sent: {Count}", updateCount);
-            // Send completion event
-            await SendSSEEvent("done", new { success = true }, logger);
+                logger.LogInformation("Stream completed. Total updates sent: {Count}", updateCount);
+                // Send completion event
+                await SendSSEEvent("done", new { success = true }, logger);
+            }
         }
         catch (Exception ex)
         {

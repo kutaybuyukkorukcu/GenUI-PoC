@@ -12,8 +12,9 @@ builder.Services.AddOpenApi();
 builder.Services.AddDbContext<FogDataDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Add Agent Service
-builder.Services.AddScoped<IAgentService, AgentService>();
+// Add Agent Services (both implementations)
+builder.Services.AddScoped<IAgentService, AgentService>();              // Original implementation
+builder.Services.AddScoped<IGenerativeUIService, GenerativeUIService>(); // New Generative UI DSL implementation
 
 // Add CORS
 builder.Services.AddCors(options =>

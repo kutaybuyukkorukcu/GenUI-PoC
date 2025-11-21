@@ -93,4 +93,43 @@ export interface ChatMessage extends Message {
   analysis?: AgentAnalysis;
   toolResult?: ToolCallResult;
   isStreaming?: boolean;
+  // New: Generative UI DSL format
+  generativeUIResponse?: GenerativeUIResponse;
+  isGenerativeUI?: boolean;
+}
+
+// ============================================
+// Generative UI DSL Types
+// ============================================
+
+export interface ThinkingItem {
+  status: 'active' | 'complete';
+  message: string;
+  timestamp?: string;
+}
+
+export type ContentBlock = TextBlock | ComponentBlock;
+
+export interface TextBlock {
+  type: 'text';
+  value: string;
+}
+
+export interface ComponentBlock {
+  type: 'component';
+  componentType: 'weather' | 'chart' | 'table' | string;
+  props: Record<string, any>;
+}
+
+export interface GenerativeUIResponse {
+  thinking: ThinkingItem[];
+  content: ContentBlock[];
+  metadata: {
+    timestamp?: string;
+    version?: string;
+    modelUsed?: string;
+    queryType?: string;
+    error?: boolean;
+    [key: string]: any;
+  };
 }
