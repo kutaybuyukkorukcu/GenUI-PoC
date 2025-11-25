@@ -35,6 +35,9 @@ public class GenerativeUIService : IGenerativeUIService
 
         // Initialize Semantic Kernel (similar setup to AgentService)
         _kernel = CreateKernel(configuration, logger);
+        
+        // Register tools for LLM to call
+        RegisterTools();
     }
     
     /// <summary>
@@ -84,6 +87,102 @@ public class GenerativeUIService : IGenerativeUIService
         }
         
         return builder.Build();
+    }
+    
+    private void RegisterTools()
+    {
+        // Weather tool
+        _kernel.Plugins.AddFromFunctions("WeatherTools",
+            new[] {
+                _kernel.CreateFunctionFromMethod(
+                    method: GetWeatherDataAsync,
+                    functionName: "GetWeatherData",
+                    description: "Get weather information for a specific location. Returns current weather conditions."
+                )
+            });
+
+        // Sales tools
+        _kernel.Plugins.AddFromFunctions("SalesTools",
+            new[] {
+                _kernel.CreateFunctionFromMethod(
+                    method: GetSalesDataAsync,
+                    functionName: "GetSalesData",
+                    description: "Get sales data for analysis. Returns detailed sales transactions."
+                ),
+                _kernel.CreateFunctionFromMethod(
+                    method: GetTopSalesPeopleAsync,
+                    functionName: "GetTopSalesPeople",
+                    description: "Get the top performing salespeople by total sales amount."
+                )
+            });
+            
+        // Data modification tools
+        _kernel.Plugins.AddFromFunctions("DataTools",
+            new[] {
+                _kernel.CreateFunctionFromMethod(
+                    method: ShowAddSaleFormAsync,
+                    functionName: "ShowAddSaleForm",
+                    description: "Shows a form to collect information for adding a new sale to the database. Use when user wants to add/create a sale."
+                ),
+                _kernel.CreateFunctionFromMethod(
+                    method: ShowAddPersonFormAsync,
+                    functionName: "ShowAddPersonForm",
+                    description: "Shows a form to collect information for adding a new salesperson. Use when user wants to add/create a person or salesperson."
+                )
+            });
+    }
+    
+    [System.ComponentModel.Description("Get weather data for a specific location")]
+    private async Task<List<WeatherData>> GetWeatherDataAsync(
+        [System.ComponentModel.Description("The location to get weather for")] string location)
+    {
+        return await _dbContext.WeatherData
+            .Where(w => w.Location.Contains(location))
+            .OrderByDescending(w => w.Date)
+            .Take(7)
+            .ToListAsync();
+    }
+
+    [System.ComponentModel.Description("Get sales data with optional filters")]
+    private async Task<List<SalesData>> GetSalesDataAsync(
+        [System.ComponentModel.Description("Optional region filter")] string? region = null,
+        [System.ComponentModel.Description("Optional start date in YYYY-MM-DD format")] string? startDate = null,
+        [System.ComponentModel.Description("Optional end date in YYYY-MM-DD format")] string? endDate = null)
+    {
+        var query = _dbContext.SalesData.AsQueryable();
+
+        if (!string.IsNullOrEmpty(region))
+            query = query.Where(s => s.Region == region);
+
+        if (DateTime.TryParse(startDate, out var start))
+            query = query.Where(s => s.SaleDate >= start);
+
+        if (DateTime.TryParse(endDate, out var end))
+            query = query.Where(s => s.SaleDate <= end);
+
+        return await query
+            .Include(s => s.SalesPerson)
+            .OrderByDescending(s => s.SaleDate)
+            .Take(20)
+            .ToListAsync();
+    }
+
+    [System.ComponentModel.Description("Get top performing salespeople by total sales")]
+    private async Task<List<SalesPersonPerformance>> GetTopSalesPeopleAsync(
+        [System.ComponentModel.Description("Number of top performers to return, default is 5")] int limit = 5)
+    {
+        return await _dbContext.SalesData
+            .Include(s => s.SalesPerson)
+            .GroupBy(s => new { s.SalesPerson!.Id, s.SalesPerson.FirstName, s.SalesPerson.LastName })
+            .Select(g => new SalesPersonPerformance
+            {
+                SalesPersonName = $"{g.Key.FirstName} {g.Key.LastName}",
+                TotalSales = g.Sum(s => s.Amount),
+                SalesCount = g.Count()
+            })
+            .OrderByDescending(p => p.TotalSales)
+            .Take(limit)
+            .ToListAsync();
     }
     
     /// <summary>
@@ -221,6 +320,10 @@ Respond with a JSON object:
         {
             return new QueryAnalysis { QueryType = "performance" };
         }
+        else if (lower.Contains("add") && (lower.Contains("sale") || lower.Contains("person")))
+        {
+            return new QueryAnalysis { QueryType = "add-data" };
+        }
         
         return new QueryAnalysis { QueryType = "general" };
     }
@@ -285,6 +388,10 @@ Respond with a JSON object:
                 
             case "performance":
                 await BuildPerformanceResponseAsync(builder, data, userMessage);
+                break;
+                
+            case "add-data":
+                await BuildAddDataFlowAsync(builder, userMessage);
                 break;
                 
             default:
@@ -379,6 +486,246 @@ Respond with a JSON object:
         builder.AddText("Great work from the team! 🎯");
         
         await Task.CompletedTask;
+    }
+    
+    /// <summary>
+    /// Builds an interactive flow for adding data with form and confirmation
+    /// </summary>
+    private async Task BuildAddDataFlowAsync(GenerativeUIResponseBuilder builder, string userMessage)
+    {
+        var lower = userMessage.ToLowerInvariant();
+        
+        // Check if this is a form submission (will contain structured data)
+        if (userMessage.Contains("FORM_SUBMIT:"))
+        {
+            // Parse form data and show confirmation
+            await BuildConfirmationFromFormAsync(builder, userMessage);
+            return;
+        }
+        
+        // Check if this is a confirmation (user clicked confirm button)
+        if (lower.Contains("confirm") && _chatHistory.Count > 2)
+        {
+            await ExecuteDataAdditionAsync(builder);
+            return;
+        }
+        
+        // If we get here, the LLM should have called a tool but didn't
+        builder.AddText("I can help you add data to the database. Try:");
+        builder.AddText("• 'add a sale' - Add a new sale record");
+        builder.AddText("• 'add a salesperson' - Add a new person to the team");
+        
+        await Task.CompletedTask;
+    }
+    
+    // Tool method for showing add sale form
+    [System.ComponentModel.Description("Shows a form to add a new sale to the database")]
+    private async Task<string> ShowAddSaleFormAsync()
+    {
+        return await Task.FromResult("SHOW_SALE_FORM");
+    }
+    
+    // Tool method for showing add person form
+    [System.ComponentModel.Description("Shows a form to add a new salesperson to the database")]
+    private async Task<string> ShowAddPersonFormAsync()
+    {
+        return await Task.FromResult("SHOW_PERSON_FORM");
+    }
+    
+    /// <summary>
+    /// Builds confirmation dialog from form submission data
+    /// </summary>
+    private async Task BuildConfirmationFromFormAsync(GenerativeUIResponseBuilder builder, string userMessage)
+    {
+        // Extract form data (in real app, this would be properly parsed JSON)
+        var formDataStart = userMessage.IndexOf("FORM_SUBMIT:") + 12;
+        var formDataJson = userMessage.Substring(formDataStart);
+        
+        try
+        {
+            var formData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(formDataJson);
+            
+            if (formData == null)
+            {
+                builder.AddText("Sorry, I couldn't parse the form data. Please try again.");
+                return;
+            }
+            
+            // Check if this is a sale or person
+            if (formData.ContainsKey("product"))
+            {
+                // Sale confirmation
+                builder.AddText("Great! Here's what you're about to add:");
+                
+                var confirmationData = new Dictionary<string, object>
+                {
+                    { "Product", formData["product"].GetString() ?? "" },
+                    { "Amount", $"${formData["amount"].GetDecimal()}" },
+                    { "Region", formData["region"].GetString() ?? "" },
+                    { "Salesperson", formData["salesperson"].GetString() ?? "" },
+                    { "Date", formData["date"].GetString() ?? "" }
+                };
+                
+                builder.AddComponent("confirmation", new
+                {
+                    title = "Add This Sale?",
+                    message = "Would you like to add this sale to the database?",
+                    confirmText = "Yes, Add Sale",
+                    cancelText = "Cancel",
+                    variant = "info",
+                    data = confirmationData
+                });
+                
+                // Store form data in chat history metadata for later use
+                _chatHistory.AddUserMessage($"PENDING_SALE:{formDataJson}");
+            }
+            else if (formData.ContainsKey("firstName"))
+            {
+                // Person confirmation
+                builder.AddText("Perfect! Review the information:");
+                
+                var confirmationData = new Dictionary<string, object>
+                {
+                    { "First Name", formData["firstName"].GetString() ?? "" },
+                    { "Last Name", formData["lastName"].GetString() ?? "" },
+                    { "Email", formData["email"].GetString() ?? "" },
+                    { "Region", formData["region"].GetString() ?? "" }
+                };
+                
+                builder.AddComponent("confirmation", new
+                {
+                    title = "Add This Person?",
+                    message = "Would you like to add this salesperson to the database?",
+                    confirmText = "Yes, Add Person",
+                    cancelText = "Cancel",
+                    variant = "info",
+                    data = confirmationData
+                });
+                
+                _chatHistory.AddUserMessage($"PENDING_PERSON:{formDataJson}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error parsing form data");
+            builder.AddText("Sorry, there was an error processing your form. Please try again.");
+        }
+        
+        await Task.CompletedTask;
+    }
+    
+    /// <summary>
+    /// Executes the actual database addition after confirmation
+    /// </summary>
+    private async Task ExecuteDataAdditionAsync(GenerativeUIResponseBuilder builder)
+    {
+        // Find the pending data in chat history
+        var pendingMessage = _chatHistory.LastOrDefault(m => 
+            m.Content?.Contains("PENDING_SALE:") == true || 
+            m.Content?.Contains("PENDING_PERSON:") == true);
+        
+        if (pendingMessage == null)
+        {
+            builder.AddText("I couldn't find the pending data. Please start over.");
+            return;
+        }
+        
+        try
+        {
+            if (pendingMessage.Content!.Contains("PENDING_SALE:"))
+            {
+                var jsonStart = pendingMessage.Content.IndexOf("PENDING_SALE:") + 13;
+                var jsonData = pendingMessage.Content.Substring(jsonStart);
+                var formData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(jsonData);
+                
+                if (formData != null)
+                {
+                    // Find or create salesperson
+                    var email = formData["salesperson"].GetString();
+                    var salesperson = await _dbContext.People
+                        .FirstOrDefaultAsync(p => p.Email == email);
+                    
+                    if (salesperson == null)
+                    {
+                        builder.AddText($"⚠️ Salesperson with email {email} not found. Please add them first.");
+                        return;
+                    }
+                    
+                    // Create sale
+                    var sale = new SalesData
+                    {
+                        Product = formData["product"].GetString() ?? "",
+                        Amount = formData["amount"].GetDecimal(),
+                        Region = formData["region"].GetString() ?? "",
+                        SaleDate = DateTime.Parse(formData["date"].GetString() ?? DateTime.Today.ToString()),
+                        SalesPersonId = salesperson.Id
+                    };
+                    
+                    _dbContext.SalesData.Add(sale);
+                    await _dbContext.SaveChangesAsync();
+                    
+                    builder.AddText("✅ Sale added successfully!");
+                    
+                    // Show the added sale in a table
+                    builder.AddComponent("table", new
+                    {
+                        columns = new[] { "Product", "Amount", "Region", "Date", "Salesperson" },
+                        rows = new[]
+                        {
+                            new
+                            {
+                                product = sale.Product,
+                                amount = sale.Amount,
+                                region = sale.Region,
+                                date = sale.SaleDate.ToString("MMM dd, yyyy"),
+                                salesperson = $"{salesperson.FirstName} {salesperson.LastName}"
+                            }
+                        }
+                    });
+                }
+            }
+            else if (pendingMessage.Content.Contains("PENDING_PERSON:"))
+            {
+                var jsonStart = pendingMessage.Content.IndexOf("PENDING_PERSON:") + 15;
+                var jsonData = pendingMessage.Content.Substring(jsonStart);
+                var formData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(jsonData);
+                
+                if (formData != null)
+                {
+                    var person = new Person
+                    {
+                        FirstName = formData["firstName"].GetString() ?? "",
+                        LastName = formData["lastName"].GetString() ?? "",
+                        Email = formData["email"].GetString() ?? "",
+                        Region = formData["region"].GetString() ?? ""
+                    };
+                    
+                    _dbContext.People.Add(person);
+                    await _dbContext.SaveChangesAsync();
+                    
+                    builder.AddText("✅ Salesperson added successfully!");
+                    
+                    builder.AddComponent("table", new
+                    {
+                        columns = new[] { "Name", "Email", "Region" },
+                        rows = new[]
+                        {
+                            new
+                            {
+                                name = $"{person.FirstName} {person.LastName}",
+                                email = person.Email,
+                                region = person.Region
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding data to database");
+            builder.AddText($"❌ Error: {ex.Message}");
+        }
     }
     
     /// <summary>

@@ -5,30 +5,6 @@ export interface Message {
   timestamp: Date;
 }
 
-export interface AgentAnalysis {
-  Intent?: string;
-  ToolToCall?: string;
-  Parameters?: Record<string, any>;
-  Reasoning?: string;
-  // Support both PascalCase and camelCase
-  intent?: string;
-  toolToCall?: string;
-  parameters?: Record<string, any>;
-  reasoning?: string;
-}
-
-export interface ToolCallResult {
-  Success?: boolean;
-  Data?: any;
-  Error?: string;
-  ComponentType?: 'weather' | 'chart' | 'table' | 'error';
-  // Support both PascalCase and camelCase
-  success?: boolean;
-  data?: any;
-  error?: string;
-  componentType?: 'weather' | 'chart' | 'table' | 'error';
-}
-
 export interface WeatherData {
   // Support both PascalCase and camelCase
   Id?: number;
@@ -90,12 +66,9 @@ export interface SalesPersonPerformance {
 }
 
 export interface ChatMessage extends Message {
-  analysis?: AgentAnalysis;
-  toolResult?: ToolCallResult;
   isStreaming?: boolean;
-  // New: Generative UI DSL format
+  // Generative UI DSL format
   generativeUIResponse?: GenerativeUIResponse;
-  isGenerativeUI?: boolean;
 }
 
 // ============================================
@@ -117,7 +90,7 @@ export interface TextBlock {
 
 export interface ComponentBlock {
   type: 'component';
-  componentType: 'weather' | 'chart' | 'table' | string;
+  componentType: string;
   props: Record<string, any>;
 }
 

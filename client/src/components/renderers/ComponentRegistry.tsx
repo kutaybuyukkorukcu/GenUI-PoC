@@ -1,5 +1,7 @@
 import { ChartRenderer } from './ChartRenderer';
 import type { ComponentBlock } from '../../types';
+import { ConfirmationDialog } from './ConfirmationDialog';
+import { FormRenderer } from './FormRenderer';
 import { TableRenderer } from './TableRenderer';
 import { WeatherCard } from './WeatherCard';
 
@@ -11,17 +13,20 @@ const COMPONENT_REGISTRY: Record<string, React.ComponentType<unknown>> = {
   weather: WeatherCard as React.ComponentType<unknown>,
   chart: ChartRenderer as React.ComponentType<unknown>,
   table: TableRenderer as React.ComponentType<unknown>,
+  confirmation: ConfirmationDialog as React.ComponentType<unknown>,
+  form: FormRenderer as React.ComponentType<unknown>,
 };
 
 interface DynamicComponentProps {
   block: ComponentBlock;
+  sendMessage?: (message: string) => void;
 }
 
 /**
  * DynamicComponent - Renders a component based on componentType from the registry.
  * Falls back to JSON display if component type is not found.
  */
-export const DynamicComponent = ({ block }: DynamicComponentProps) => {
+export const DynamicComponent = ({ block, sendMessage }: DynamicComponentProps) => {
   const { componentType, props } = block;
   const Component = COMPONENT_REGISTRY[componentType];
 
@@ -37,7 +42,9 @@ export const DynamicComponent = ({ block }: DynamicComponentProps) => {
     );
   }
 
-  // Pass the entire props object to the component
+  // Pass the entire props object to the component along with sendMessage
   // Our components will receive the props as their data
-  return <Component {...props} />;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const componentProps = { ...(props as Record<string, unknown>), sendMessage } as any;
+  return <Component {...componentProps} />;
 };

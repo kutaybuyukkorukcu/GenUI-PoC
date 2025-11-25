@@ -6,6 +6,7 @@ import { ThinkingList } from './ThinkingIndicator';
 interface GenerativeUIRendererProps {
   response: GenerativeUIResponse;
   isStreaming?: boolean;
+  sendMessage?: (message: string) => void;
 }
 
 /**
@@ -21,7 +22,8 @@ interface GenerativeUIRendererProps {
  */
 export const GenerativeUIRenderer = ({ 
   response, 
-  isStreaming = false 
+  isStreaming = false,
+  sendMessage,
 }: GenerativeUIRendererProps) => {
   
   // Handle empty or invalid response
@@ -63,7 +65,7 @@ export const GenerativeUIRenderer = ({
       {response.content && response.content.length > 0 && (
         <div className="space-y-3">
           {response.content.map((block, index) => (
-            <ContentBlockRenderer key={index} block={block} />
+            <ContentBlockRenderer key={index} block={block} sendMessage={sendMessage} />
           ))}
         </div>
       )}
@@ -94,7 +96,13 @@ export const GenerativeUIRenderer = ({
 /**
  * ContentBlockRenderer - Renders individual content blocks (text or component)
  */
-const ContentBlockRenderer = ({ block }: { block: ContentBlock }) => {
+const ContentBlockRenderer = ({ 
+  block, 
+  sendMessage 
+}: { 
+  block: ContentBlock;
+  sendMessage?: (message: string) => void;
+}) => {
   if (block.type === 'text') {
     return (
       <div className="prose prose-sm max-w-none">
@@ -104,7 +112,7 @@ const ContentBlockRenderer = ({ block }: { block: ContentBlock }) => {
   }
 
   if (block.type === 'component') {
-    return <DynamicComponent block={block} />;
+    return <DynamicComponent block={block} sendMessage={sendMessage} />;
   }
 
   // Unknown block type

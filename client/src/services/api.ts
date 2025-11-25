@@ -1,51 +1,6 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-export const chatWithAgent = (
-  message: string,
-  onMessage: (data: any) => void,
-  onError: (error: string) => void,
-  onComplete: () => void
-) => {
-  const eventSource = new EventSource(`${API_BASE_URL}/api/agent/chat`, {
-    // Note: EventSource doesn't support POST directly
-    // We'll need to modify this approach
-  });
-
-  eventSource.addEventListener('message', (event) => {
-    const data = JSON.parse(event.data);
-    onMessage(data);
-  });
-
-  eventSource.addEventListener('analysis', (event) => {
-    const data = JSON.parse(event.data);
-    onMessage({ type: 'analysis', data });
-  });
-
-  eventSource.addEventListener('tool-result', (event) => {
-    const data = JSON.parse(event.data);
-    onMessage({ type: 'tool-result', data });
-  });
-
-  eventSource.addEventListener('done', () => {
-    eventSource.close();
-    onComplete();
-  });
-
-  eventSource.addEventListener('error', (event) => {
-    const data = JSON.parse((event as MessageEvent).data);
-    onError(data.message);
-    eventSource.close();
-  });
-
-  eventSource.onerror = () => {
-    onError('Connection error');
-    eventSource.close();
-  };
-
-  return () => eventSource.close();
-};
-
-// Better approach using fetch with SSE
+// SSE-based chat with support for generative UI responses
 export const chatWithAgentSSE = async (
   message: string,
   onMessage: (data: any) => void,

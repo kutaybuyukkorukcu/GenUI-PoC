@@ -6,23 +6,19 @@ import { cn } from '../../lib/utils';
 
 interface MessageListProps {
   messages: ChatMessage[];
-  onSelectMessage?: (message: ChatMessage) => void;
-  selectedMessageId?: string;
+  sendMessage?: (message: string) => void;
 }
 
-export const MessageList = ({ messages, onSelectMessage, selectedMessageId }: MessageListProps) => {
+export const MessageList = ({ messages, sendMessage }: MessageListProps) => {
   return (
     <div className="flex flex-col space-y-4">
       {messages.map((message) => (
         <div
           key={message.id}
           className={cn(
-            'group flex gap-3 rounded-lg p-4 transition-colors',
-            message.role === 'user' ? 'bg-muted/50' : 'bg-card',
-            onSelectMessage && message.toolResult && 'cursor-pointer hover:bg-accent',
-            selectedMessageId === message.id && 'ring-2 ring-primary'
+            'group flex gap-3 rounded-lg p-4',
+            message.role === 'user' ? 'bg-muted/50' : 'bg-card'
           )}
-          onClick={() => onSelectMessage && message.toolResult && onSelectMessage(message)}
         >
           <div className="flex-shrink-0">
             {message.role === 'user' ? (
@@ -49,30 +45,17 @@ export const MessageList = ({ messages, onSelectMessage, selectedMessageId }: Me
               )}
             </div>
 
-            {/* Render Generative UI DSL format */}
-            {message.isGenerativeUI && message.generativeUIResponse ? (
+            {/* Render content */}
+            {message.role === 'user' ? (
+              <div className="text-sm leading-relaxed">{message.content}</div>
+            ) : message.generativeUIResponse ? (
               <GenerativeUIRenderer 
                 response={message.generativeUIResponse} 
                 isStreaming={message.isStreaming}
+                sendMessage={sendMessage}
               />
             ) : (
-              <>
-                {/* Render legacy format */}
-                <div className="text-sm leading-relaxed">{message.content}</div>
-
-                {message.analysis && (
-                  <div className="mt-2 rounded-md border border-dashed p-3 text-xs">
-                    <p className="font-semibold">Analysis:</p>
-                    <p className="text-muted-foreground">{message.analysis.reasoning}</p>
-                  </div>
-                )}
-
-                {message.toolResult && onSelectMessage && (
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    Click to view results →
-                  </div>
-                )}
-              </>
+              <div className="text-sm leading-relaxed">{message.content}</div>
             )}
           </div>
         </div>
