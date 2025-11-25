@@ -39,7 +39,7 @@ public class ComponentBlock : ContentBlock
     public override string Type => "component";
     
     /// <summary>
-    /// Type of component to render: "weather", "chart", "table", etc.
+    /// Type of component to render: "weather", "chart", "table", "confirmation", "form", etc.
     /// </summary>
     public string ComponentType { get; set; } = string.Empty;
     
@@ -47,4 +47,11 @@ public class ComponentBlock : ContentBlock
     /// Properties to pass to the component (can be any JSON structure)
     /// </summary>
     public JsonElement Props { get; set; }
+    
+    /// <summary>
+    /// Actions that can be triggered by user interaction with this component.
+    /// Makes the API stateless - SDK executes these directly.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ComponentActions? Actions { get; set; }
 }

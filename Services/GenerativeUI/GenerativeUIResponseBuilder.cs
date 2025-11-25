@@ -68,6 +68,177 @@ public class GenerativeUIResponseBuilder
     }
     
     /// <summary>
+    /// Adds a component block with actions (for interactive components like forms, confirmations)
+    /// </summary>
+    /// <param name="componentType">Type of component</param>
+    /// <param name="props">Component properties</param>
+    /// <param name="actions">Actions that can be triggered by user interaction</param>
+    public void AddComponentWithActions(string componentType, object props, ComponentActions actions)
+    {
+        var propsJson = JsonSerializer.SerializeToElement(props, _jsonOptions);
+        _response.Content.Add(new ComponentBlock 
+        { 
+            ComponentType = componentType,
+            Props = propsJson,
+            Actions = actions
+        });
+    }
+    
+    /// <summary>
+    /// Adds a confirmation dialog with embedded actions (stateless pattern)
+    /// </summary>
+    public void AddConfirmation(
+        string title,
+        string message,
+        object data,
+        ComponentAction onConfirmAction,
+        string confirmText = "Confirm",
+        string cancelText = "Cancel",
+        string variant = "info")
+    {
+        var props = new
+        {
+            title,
+            message,
+            confirmText,
+            cancelText,
+            variant,
+            data
+        };
+        
+        AddComponentWithActions("confirmation", props, new ComponentActions
+        {
+            OnConfirm = onConfirmAction,
+            OnCancel = new DismissAction { Message = "Action cancelled" }
+        });
+    }
+    
+    /// <summary>
+    /// Adds a form with submit action (stateless pattern)
+    /// </summary>
+    public void AddForm(
+        string title,
+        string description,
+        object[] fields,
+        ComponentAction onSubmitAction,
+        string submitText = "Submit")
+    {
+        var props = new
+        {
+            title,
+            description,
+            fields,
+            submitText
+        };
+        
+        AddComponentWithActions("form", props, new ComponentActions
+        {
+            OnSubmit = onSubmitAction,
+            OnCancel = new DismissAction()
+        });
+    }
+    
+    /// <summary>
+    /// Adds a card component for displaying a single record/entity
+    /// </summary>
+    public void AddCard(string title, object data, string? description = null, ComponentAction? onClick = null)
+    {
+        var props = new
+        {
+            title,
+            description,
+            data
+        };
+        
+        if (onClick != null)
+        {
+            AddComponentWithActions("card", props, new ComponentActions { OnClick = onClick });
+        }
+        else
+        {
+            AddComponent("card", props);
+        }
+    }
+    
+    /// <summary>
+    /// Adds a list component for displaying collections of items
+    /// </summary>
+    public void AddList(
+        object items, 
+        string layout = "grid", 
+        string? title = null,
+        ComponentAction? onItemClick = null)
+    {
+        var props = new
+        {
+            title,
+            items,
+            layout // grid, list, compact
+        };
+        
+        if (onItemClick != null)
+        {
+            AddComponentWithActions("list", props, new ComponentActions { OnClick = onItemClick });
+        }
+        else
+        {
+            AddComponent("list", props);
+        }
+    }
+    
+    /// <summary>
+    /// Adds a table component for displaying tabular data
+    /// </summary>
+    public void AddTable(
+        object[] columns,
+        object rows,
+        string? title = null,
+        bool sortable = true,
+        bool filterable = false,
+        ComponentAction? onRowClick = null)
+    {
+        var props = new
+        {
+            title,
+            columns,
+            rows,
+            sortable,
+            filterable
+        };
+        
+        if (onRowClick != null)
+        {
+            AddComponentWithActions("table", props, new ComponentActions { OnRowClick = onRowClick });
+        }
+        else
+        {
+            AddComponent("table", props);
+        }
+    }
+    
+    /// <summary>
+    /// Adds a chart component for data visualization
+    /// </summary>
+    public void AddChart(
+        string chartType,
+        object data,
+        string? title = null,
+        string? xAxis = null,
+        string? yAxis = null)
+    {
+        var props = new
+        {
+            type = chartType, // line, bar, pie, area
+            title,
+            data,
+            xAxis,
+            yAxis
+        };
+        
+        AddComponent("chart", props);
+    }
+    
+    /// <summary>
     /// Adds metadata to the response
     /// </summary>
     /// <param name="key">Metadata key</param>

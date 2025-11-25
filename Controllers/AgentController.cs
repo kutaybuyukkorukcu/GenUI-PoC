@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using FogData.Services;
 using System.Text.Json;
-using System.Text;
 
 namespace FogData.Controllers;
 
@@ -9,18 +8,11 @@ namespace FogData.Controllers;
 [Route("api/[controller]")]
 public class AgentController : ControllerBase
 {
-    private readonly IAgentService _agentService;
     private readonly IGenerativeUIService _generativeUIService;
-    private readonly IConfiguration _configuration;
 
-    public AgentController(
-        IAgentService agentService,
-        IGenerativeUIService generativeUIService,
-        IConfiguration configuration)
+    public AgentController(IGenerativeUIService generativeUIService)
     {
-        _agentService = agentService;
         _generativeUIService = generativeUIService;
-        _configuration = configuration;
     }
 
     [HttpPost("chat")]
@@ -42,62 +34,15 @@ public class AgentController : ControllerBase
         
         logger.LogInformation("SSE headers set, starting to process message");
 
-        // 🚀 FEATURE FLAG: Choose implementation based on configuration
-        var useGenerativeUIDSL = _configuration.GetValue<bool>("Features:UseGenerativeUIDSL", false);
-        logger.LogInformation("Using Generative UI DSL: {UseGenerativeUI}", useGenerativeUIDSL);
-
         try
         {
-            if (useGenerativeUIDSL)
+            await foreach (var jsonResponse in _generativeUIService.ProcessUserMessageAsync(request.Message))
             {
-                // NEW IMPLEMENTATION: Generative UI with JSON DSL
-                logger.LogInformation("Using GenerativeUIService");
-                await foreach (var jsonResponse in _generativeUIService.ProcessUserMessageAsync(request.Message))
-                {
-                    logger.LogInformation("Sending GenerativeUI response, length: {Length}", jsonResponse.Length);
-                    await SendSSEEvent("generative-ui", new { response = jsonResponse }, logger);
-                }
-                
-                // Send completion
-                await SendSSEEvent("done", new { success = true }, logger);
+                logger.LogDebug("Sending GenerativeUI response, length: {Length}", jsonResponse.Length);
+                await SendSSEEvent("generative-ui", new { response = jsonResponse }, logger);
             }
-            else
-            {
-                // EXISTING IMPLEMENTATION: Tool-calling approach (UNCHANGED)
-                logger.LogInformation("Using legacy AgentService");
-                var updateCount = 0;
-                await foreach (var update in _agentService.ProcessUserMessageAsync(request.Message))
-                {
-                updateCount++;
-                logger.LogInformation("Received update #{Count}: Type={Type}, Content={Content}, ToolName={ToolName}", 
-                    updateCount, update.Type, update.Content?.Substring(0, Math.Min(50, update.Content?.Length ?? 0)), update.ToolName);
-                
-                // Map StreamingChatUpdate type to SSE event type
-                var eventType = update.Type switch
-                {
-                    "tool-result" => "tool-result",
-                    "synthesis" => "message",
-                    "message" => "message",
-                    _ => "message"
-                };
-
-                // Prepare data based on update type
-                object data = update.Type switch
-                {
-                    "tool-result" => update.ToolResult!,
-                    "synthesis" => new { role = "assistant", content = update.Content },
-                    "message" => new { role = "assistant", content = update.Content },
-                    _ => new { content = update.Content }
-                };
-
-                    logger.LogInformation("Sending SSE event: {EventType}", eventType);
-                    await SendSSEEvent(eventType, data, logger);
-                }
-
-                logger.LogInformation("Stream completed. Total updates sent: {Count}", updateCount);
-                // Send completion event
-                await SendSSEEvent("done", new { success = true }, logger);
-            }
+            
+            await SendSSEEvent("done", new { success = true }, logger);
         }
         catch (Exception ex)
         {

@@ -3,6 +3,7 @@ using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using FogData.Database;
 using FogData.Database.Entities;
+using FogData.Models.GenerativeUI;
 using Microsoft.EntityFrameworkCore;
 using FogData.Services.GenerativeUI;
 using System.Text.Json;
@@ -10,10 +11,9 @@ using System.Text.Json;
 namespace FogData.Services;
 
 /// <summary>
-/// Service that uses LLM to generate UI components via JSON DSL format.
-/// This is a parallel implementation to AgentService that uses a different approach:
-/// instead of pattern matching and tool calling, the LLM directly generates
-/// the complete UI specification in structured JSON format.
+/// Generic Generative UI Service - Domain Agnostic.
+/// Works with any data domain by analyzing query intent and data structure,
+/// not hardcoded business logic. Suitable for SaaS products serving multiple industries.
 /// </summary>
 public class GenerativeUIService : IGenerativeUIService
 {
@@ -22,6 +22,8 @@ public class GenerativeUIService : IGenerativeUIService
     private readonly IConfiguration _configuration;
     private readonly ILogger<GenerativeUIService> _logger;
     private readonly ChatHistory _chatHistory;
+    private readonly QueryAnalyzer _queryAnalyzer;
+    private readonly ComponentDecisionEngine _componentEngine;
     
     public GenerativeUIService(
         FogDataDbContext dbContext, 
@@ -33,10 +35,15 @@ public class GenerativeUIService : IGenerativeUIService
         _logger = logger;
         _chatHistory = new ChatHistory();
 
-        // Initialize Semantic Kernel (similar setup to AgentService)
+        // Initialize Semantic Kernel
         _kernel = CreateKernel(configuration, logger);
         
-        // Register tools for LLM to call
+        // Initialize generic analyzers
+        var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+        _queryAnalyzer = new QueryAnalyzer(_kernel, loggerFactory.CreateLogger<QueryAnalyzer>());
+        _componentEngine = new ComponentDecisionEngine();
+        
+        // Register generic data access tools (not domain-specific)
         RegisterTools();
     }
     
@@ -91,102 +98,140 @@ public class GenerativeUIService : IGenerativeUIService
     
     private void RegisterTools()
     {
-        // Weather tool
-        _kernel.Plugins.AddFromFunctions("WeatherTools",
+        // Generic data query tools - these can work with any entity
+        _kernel.Plugins.AddFromFunctions("DataAccess",
             new[] {
                 _kernel.CreateFunctionFromMethod(
-                    method: GetWeatherDataAsync,
-                    functionName: "GetWeatherData",
-                    description: "Get weather information for a specific location. Returns current weather conditions."
-                )
-            });
-
-        // Sales tools
-        _kernel.Plugins.AddFromFunctions("SalesTools",
-            new[] {
-                _kernel.CreateFunctionFromMethod(
-                    method: GetSalesDataAsync,
-                    functionName: "GetSalesData",
-                    description: "Get sales data for analysis. Returns detailed sales transactions."
+                    method: QueryDataAsync,
+                    functionName: "QueryData",
+                    description: "Query any data from the database. Specify entity type (WeatherData, SalesData, Person) and optional filters."
                 ),
                 _kernel.CreateFunctionFromMethod(
-                    method: GetTopSalesPeopleAsync,
-                    functionName: "GetTopSalesPeople",
-                    description: "Get the top performing salespeople by total sales amount."
-                )
-            });
-            
-        // Data modification tools
-        _kernel.Plugins.AddFromFunctions("DataTools",
-            new[] {
-                _kernel.CreateFunctionFromMethod(
-                    method: ShowAddSaleFormAsync,
-                    functionName: "ShowAddSaleForm",
-                    description: "Shows a form to collect information for adding a new sale to the database. Use when user wants to add/create a sale."
-                ),
-                _kernel.CreateFunctionFromMethod(
-                    method: ShowAddPersonFormAsync,
-                    functionName: "ShowAddPersonForm",
-                    description: "Shows a form to collect information for adding a new salesperson. Use when user wants to add/create a person or salesperson."
+                    method: AggregateDataAsync,
+                    functionName: "AggregateData",
+                    description: "Aggregate/group data for analysis. Useful for performance metrics, summaries, and comparisons."
                 )
             });
     }
     
-    [System.ComponentModel.Description("Get weather data for a specific location")]
-    private async Task<List<WeatherData>> GetWeatherDataAsync(
-        [System.ComponentModel.Description("The location to get weather for")] string location)
+    /// <summary>
+    /// Generic data query method - works with any entity
+    /// </summary>
+    [System.ComponentModel.Description("Query data from database")]
+    private async Task<string> QueryDataAsync(
+        [System.ComponentModel.Description("Entity type: WeatherData, SalesData, Person")] string entityType,
+        [System.ComponentModel.Description("Optional filters as JSON")] string? filters = null)
     {
-        return await _dbContext.WeatherData
-            .Where(w => w.Location.Contains(location))
+        try
+        {
+            object? result = entityType.ToLowerInvariant() switch
+            {
+                "weatherdata" or "weather" => await QueryWeatherDataAsync(filters),
+                "salesdata" or "sales" => await QuerySalesDataAsync(filters),
+                "person" or "people" => await QueryPeopleDataAsync(filters),
+                _ => null
+            };
+
+            return JsonSerializer.Serialize(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error querying {EntityType}", entityType);
+            return JsonSerializer.Serialize(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Generic aggregation method for analytics
+    /// </summary>
+    [System.ComponentModel.Description("Aggregate data for analysis")]
+    private async Task<string> AggregateDataAsync(
+        [System.ComponentModel.Description("Entity type to aggregate")] string entityType,
+        [System.ComponentModel.Description("Grouping field")] string groupBy,
+        [System.ComponentModel.Description("Aggregation type: sum, count, avg")] string aggregationType = "sum")
+    {
+        try
+        {
+            object? result = entityType.ToLowerInvariant() switch
+            {
+                "salesdata" or "sales" => await AggregateSalesDataAsync(groupBy, aggregationType),
+                _ => null
+            };
+
+            return JsonSerializer.Serialize(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error aggregating {EntityType}", entityType);
+            return JsonSerializer.Serialize(new { error = ex.Message });
+        }
+    }
+
+    // Helper methods for specific entity queries
+    private async Task<List<WeatherData>> QueryWeatherDataAsync(string? filters)
+    {
+        var query = _dbContext.WeatherData.AsQueryable();
+        
+        // Apply basic filters (can be extended with JSON parsing)
+        return await query
             .OrderByDescending(w => w.Date)
-            .Take(7)
+            .Take(20)
             .ToListAsync();
     }
 
-    [System.ComponentModel.Description("Get sales data with optional filters")]
-    private async Task<List<SalesData>> GetSalesDataAsync(
-        [System.ComponentModel.Description("Optional region filter")] string? region = null,
-        [System.ComponentModel.Description("Optional start date in YYYY-MM-DD format")] string? startDate = null,
-        [System.ComponentModel.Description("Optional end date in YYYY-MM-DD format")] string? endDate = null)
+    private async Task<List<SalesData>> QuerySalesDataAsync(string? filters)
     {
-        var query = _dbContext.SalesData.AsQueryable();
-
-        if (!string.IsNullOrEmpty(region))
-            query = query.Where(s => s.Region == region);
-
-        if (DateTime.TryParse(startDate, out var start))
-            query = query.Where(s => s.SaleDate >= start);
-
-        if (DateTime.TryParse(endDate, out var end))
-            query = query.Where(s => s.SaleDate <= end);
-
+        var query = _dbContext.SalesData.Include(s => s.SalesPerson).AsQueryable();
+        
+        // Apply basic filters (can be extended with JSON parsing)
         return await query
-            .Include(s => s.SalesPerson)
             .OrderByDescending(s => s.SaleDate)
             .Take(20)
             .ToListAsync();
     }
 
-    [System.ComponentModel.Description("Get top performing salespeople by total sales")]
-    private async Task<List<SalesPersonPerformance>> GetTopSalesPeopleAsync(
-        [System.ComponentModel.Description("Number of top performers to return, default is 5")] int limit = 5)
+    private async Task<List<Person>> QueryPeopleDataAsync(string? filters)
     {
+        return await _dbContext.People
+            .OrderBy(p => p.LastName)
+            .Take(20)
+            .ToListAsync();
+    }
+
+    private async Task<object> AggregateSalesDataAsync(string groupBy, string aggregationType)
+    {
+        if (groupBy.ToLowerInvariant().Contains("person") || groupBy.ToLowerInvariant().Contains("salesperson"))
+        {
+            return await _dbContext.SalesData
+                .Include(s => s.SalesPerson)
+                .GroupBy(s => new { s.SalesPerson!.Id, s.SalesPerson.FirstName, s.SalesPerson.LastName })
+                .Select(g => new
+                {
+                    Name = $"{g.Key.FirstName} {g.Key.LastName}",
+                    TotalSales = g.Sum(s => s.Amount),
+                    Count = g.Count()
+                })
+                .OrderByDescending(x => x.TotalSales)
+                .Take(10)
+                .ToListAsync();
+        }
+        
+        // Default: group by region
         return await _dbContext.SalesData
-            .Include(s => s.SalesPerson)
-            .GroupBy(s => new { s.SalesPerson!.Id, s.SalesPerson.FirstName, s.SalesPerson.LastName })
-            .Select(g => new SalesPersonPerformance
+            .GroupBy(s => s.Region)
+            .Select(g => new
             {
-                SalesPersonName = $"{g.Key.FirstName} {g.Key.LastName}",
+                Region = g.Key,
                 TotalSales = g.Sum(s => s.Amount),
-                SalesCount = g.Count()
+                Count = g.Count()
             })
-            .OrderByDescending(p => p.TotalSales)
-            .Take(limit)
+            .OrderByDescending(x => x.TotalSales)
             .ToListAsync();
     }
     
     /// <summary>
-    /// Processes user message and generates JSON DSL response
+    /// Processes user message and generates JSON DSL response - GENERIC APPROACH
+    /// Works with any data domain by analyzing intent and data structure
     /// </summary>
     public async IAsyncEnumerable<string> ProcessUserMessageAsync(string userMessage)
     {
@@ -198,544 +243,505 @@ public class GenerativeUIService : IGenerativeUIService
         responseBuilder.AddThinkingItem("Analyzing your query...", "active");
         yield return responseBuilder.BuildPartial();
         
-        QueryAnalysis? queryAnalysis = null;
+        QueryIntent? intent = null;
         object? data = null;
         Exception? processingError = null;
         
-        // Step 2: Analyze query and determine what data is needed
+        // Step 2: Analyze query intent (generic - not domain-specific)
         try
         {
-            queryAnalysis = await AnalyzeQueryAsync(userMessage);
+            intent = await _queryAnalyzer.AnalyzeIntentAsync(userMessage);
+            _logger.LogInformation("Query intent: {Intent}, RequiresInput: {RequiresInput}", 
+                intent.Type, intent.RequiresInput);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error analyzing query");
+            _logger.LogError(ex, "Error analyzing query intent");
             processingError = ex;
         }
         
-        if (processingError == null && queryAnalysis != null)
+        if (processingError == null && intent != null)
         {
             responseBuilder.UpdateLastThinkingStatus("complete");
-            responseBuilder.AddThinkingItem($"Query type: {queryAnalysis.QueryType}", "complete");
-            responseBuilder.AddThinkingItem("Fetching data...", "active");
-            yield return responseBuilder.BuildPartial();
+            responseBuilder.AddThinkingItem($"Intent: {intent.Type}", "complete");
             
-            // Step 3: Fetch data based on query analysis
-            try
+            // Step 3: Handle input-required scenarios (forms)
+            if (intent.RequiresInput)
             {
-                data = await FetchDataAsync(queryAnalysis);
+                responseBuilder.AddThinkingItem("Preparing input form...", "active");
+                yield return responseBuilder.BuildPartial();
+                
+                await BuildInputFormAsync(responseBuilder, intent, userMessage);
+                responseBuilder.UpdateLastThinkingStatus("complete");
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogError(ex, "Error fetching data");
-                processingError = ex;
+                // Step 4: Fetch data using LLM tool calling
+                responseBuilder.AddThinkingItem("Fetching relevant data...", "active");
+                yield return responseBuilder.BuildPartial();
+                
+                try
+                {
+                    data = await FetchDataUsingLLMAsync(userMessage, intent);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error fetching data");
+                    processingError = ex;
+                }
+                
+                if (processingError == null)
+                {
+                    responseBuilder.UpdateLastThinkingStatus("complete");
+                    responseBuilder.AddThinkingItem("Analyzing data structure...", "active");
+                    yield return responseBuilder.BuildPartial();
+                    
+                    // Step 5: Analyze data structure and decide component
+                    var dataAnalysis = _queryAnalyzer.AnalyzeDataStructure(data);
+                    var componentDecision = _componentEngine.DecideComponent(intent, dataAnalysis, data);
+                    
+                    _logger.LogInformation("Component decision: {ComponentType} - {Reasoning}", 
+                        componentDecision.ComponentType, componentDecision.Reasoning);
+                    
+                    responseBuilder.UpdateLastThinkingStatus("complete");
+                    responseBuilder.AddThinkingItem($"Rendering {componentDecision.ComponentType}...", "active");
+                    yield return responseBuilder.BuildPartial();
+                    
+                    // Step 6: Build generic response with selected component
+                    await BuildGenericResponseAsync(responseBuilder, intent, data, componentDecision, userMessage);
+                    responseBuilder.UpdateLastThinkingStatus("complete");
+                }
             }
         }
         
-        if (processingError == null && queryAnalysis != null)
-        {
-            responseBuilder.UpdateLastThinkingStatus("complete");
-            responseBuilder.AddThinkingItem("Generating response...", "active");
-            yield return responseBuilder.BuildPartial();
-        }
-        
-        // Step 4: Build the response with text and components
+        // Step 7: Handle errors
         if (processingError != null)
         {
             responseBuilder.UpdateLastThinkingStatus("complete");
             responseBuilder.AddText($"I encountered an error: {processingError.Message}");
             responseBuilder.AddMetadata("error", true);
         }
-        else if (queryAnalysis != null)
+        
+        // Step 8: Add metadata
+        if (intent != null)
         {
-            await BuildResponseContentAsync(responseBuilder, queryAnalysis, data, userMessage);
-            responseBuilder.UpdateLastThinkingStatus("complete");
-            
-            // Step 5: Add metadata
             responseBuilder.AddMetadata("modelUsed", _configuration["SemanticKernel:Provider"] ?? "unknown");
-            responseBuilder.AddMetadata("queryType", queryAnalysis.QueryType);
+            responseBuilder.AddMetadata("intentType", intent.Type.ToString());
         }
         
-        // Step 6: Return final response
+        // Step 9: Return final response
         yield return responseBuilder.Build();
     }
     
     /// <summary>
-    /// Analyzes the user query to determine intent and data requirements
+    /// Fetches data using LLM tool calling - lets the LLM decide which tools to use
     /// </summary>
-    private async Task<QueryAnalysis> AnalyzeQueryAsync(string userMessage)
+    private async Task<object?> FetchDataUsingLLMAsync(string userMessage, QueryIntent intent)
     {
         var chatService = _kernel.GetRequiredService<IChatCompletionService>();
         
-        var analysisPrompt = $@"
-Analyze this user query and determine:
-1. What type of query is it? (weather, sales, performance, general)
-2. What specific data is requested?
-3. What location/timeframe/filters are mentioned?
+        // Build a prompt that guides the LLM to use tools
+        var dataPrompt = $@"User query: ""{userMessage}""
 
-User query: ""{userMessage}""
-
-Respond with a JSON object:
-{{
-  ""queryType"": ""weather|sales|performance|general"",
-  ""location"": ""location if mentioned"",
-  ""timeframe"": ""timeframe if mentioned"",
-  ""filters"": {{}}
-}}
-";
+Based on this query, determine what data needs to be fetched from the database.
+Use the available tools to query the appropriate data.
+Return the results as JSON.";
 
         var chatHistory = new ChatHistory();
-        chatHistory.AddUserMessage(analysisPrompt);
+        chatHistory.AddSystemMessage("You are a data assistant. Use the available tools to fetch relevant data based on user queries.");
+        chatHistory.AddUserMessage(dataPrompt);
         
-        var response = await chatService.GetChatMessageContentAsync(chatHistory);
-        var responseText = response.Content ?? "{}";
+        var executionSettings = new OpenAIPromptExecutionSettings
+        {
+            ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
+            Temperature = 0.3
+        };
         
         try
         {
-            return JsonSerializer.Deserialize<QueryAnalysis>(responseText) ?? new QueryAnalysis();
+            var response = await chatService.GetChatMessageContentAsync(
+                chatHistory,
+                executionSettings,
+                _kernel
+            );
+            
+            var content = response.Content ?? "{}";
+            
+            // Try to deserialize as data
+            try
+            {
+                return JsonSerializer.Deserialize<List<object>>(content);
+            }
+            catch
+            {
+                // If not a list, might be single object or aggregated data
+                return content;
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // Fallback: try to infer from keywords
-            return InferQueryType(userMessage);
+            _logger.LogError(ex, "Error in LLM tool calling");
+            
+            // Fallback: direct database query based on intent
+            return await FallbackDataFetchAsync(intent);
         }
     }
     
     /// <summary>
-    /// Fallback method to infer query type from keywords
+    /// Fallback data fetching when LLM tool calling fails
     /// </summary>
-    private QueryAnalysis InferQueryType(string userMessage)
+    private async Task<object?> FallbackDataFetchAsync(QueryIntent intent)
+    {
+        return intent.Type switch
+        {
+            QueryIntentType.Analyze or QueryIntentType.Compare => await AggregateSalesDataAsync("salesperson", "sum"),
+            QueryIntentType.View or QueryIntentType.Search => await QuerySalesDataAsync(null),
+            _ => await QuerySalesDataAsync(null)
+        };
+    }
+    
+    /// <summary>
+    /// Builds input forms for CREATE/UPDATE operations
+    /// </summary>
+    private async Task BuildInputFormAsync(GenerativeUIResponseBuilder builder, QueryIntent intent, string userMessage)
     {
         var lower = userMessage.ToLowerInvariant();
         
-        if (lower.Contains("weather") || lower.Contains("temperature") || lower.Contains("forecast"))
+        // Determine what type of form to show based on keywords
+        if (lower.Contains("sale"))
         {
-            return new QueryAnalysis { QueryType = "weather" };
+            await BuildAddSaleFormAsync(builder);
         }
-        else if (lower.Contains("sales") || lower.Contains("revenue") || lower.Contains("sold"))
+        else if (lower.Contains("person") || lower.Contains("employee") || lower.Contains("salesperson"))
         {
-            return new QueryAnalysis { QueryType = "sales" };
+            await BuildAddPersonFormAsync(builder);
         }
-        else if (lower.Contains("performance") || lower.Contains("top") || lower.Contains("best"))
+        else
         {
-            return new QueryAnalysis { QueryType = "performance" };
-        }
-        else if (lower.Contains("add") && (lower.Contains("sale") || lower.Contains("person")))
-        {
-            return new QueryAnalysis { QueryType = "add-data" };
-        }
-        
-        return new QueryAnalysis { QueryType = "general" };
-    }
-    
-    /// <summary>
-    /// Fetches data from database based on query analysis
-    /// </summary>
-    private async Task<object?> FetchDataAsync(QueryAnalysis analysis)
-    {
-        switch (analysis.QueryType)
-        {
-            case "weather":
-                return await _dbContext.WeatherData
-                    .OrderByDescending(w => w.Date)
-                    .Take(10)
-                    .ToListAsync();
-                
-            case "sales":
-                return await _dbContext.SalesData
-                    .Include(s => s.SalesPerson)
-                    .OrderByDescending(s => s.SaleDate)
-                    .Take(20)
-                    .ToListAsync();
-                
-            case "performance":
-                return await _dbContext.SalesData
-                    .Include(s => s.SalesPerson)
-                    .GroupBy(s => new { s.SalesPerson!.Id, s.SalesPerson.FirstName, s.SalesPerson.LastName })
-                    .Select(g => new
-                    {
-                        SalesPersonName = $"{g.Key.FirstName} {g.Key.LastName}",
-                        TotalSales = g.Sum(s => s.Amount),
-                        SalesCount = g.Count()
-                    })
-                    .OrderByDescending(x => x.TotalSales)
-                    .Take(10)
-                    .ToListAsync();
-                
-            default:
-                return null;
+            // Generic help text
+            builder.AddText("I can help you add data. What would you like to create?");
+            builder.AddText("• **Sale record** - Add a new transaction");
+            builder.AddText("• **Person** - Add a team member or contact");
         }
     }
     
     /// <summary>
-    /// Builds the response content with text and components
+    /// Builds a generic response with appropriate component based on decision engine
     /// </summary>
-    private async Task BuildResponseContentAsync(
-        GenerativeUIResponseBuilder builder, 
-        QueryAnalysis analysis, 
+    private async Task BuildGenericResponseAsync(
+        GenerativeUIResponseBuilder builder,
+        QueryIntent intent,
         object? data,
+        ComponentDecision decision,
         string userMessage)
     {
-        switch (analysis.QueryType)
+        if (data == null)
         {
-            case "weather":
-                await BuildWeatherResponseAsync(builder, data as List<WeatherData>, userMessage);
+            builder.AddText("I couldn't find any relevant data for your query.");
+            return;
+        }
+        
+        // Add contextual text based on intent
+        var contextText = intent.Type switch
+        {
+            QueryIntentType.Analyze => "Here's an analysis of the data:",
+            QueryIntentType.Compare => "Here's a comparison:",
+            QueryIntentType.Search => "Here are the search results:",
+            QueryIntentType.View => "Here's the requested information:",
+            _ => "Here's what I found:"
+        };
+        
+        builder.AddText(contextText);
+        
+        // Render the appropriate component based on decision
+        switch (decision.ComponentType)
+        {
+            case "card":
+                await RenderCardComponentAsync(builder, data);
                 break;
                 
-            case "sales":
-                await BuildSalesResponseAsync(builder, data as List<SalesData>, userMessage);
+            case "list":
+                await RenderListComponentAsync(builder, data);
                 break;
                 
-            case "performance":
-                await BuildPerformanceResponseAsync(builder, data, userMessage);
+            case "table":
+                await RenderTableComponentAsync(builder, data);
                 break;
                 
-            case "add-data":
-                await BuildAddDataFlowAsync(builder, userMessage);
+            case "chart":
+                await RenderChartComponentAsync(builder, data, intent);
                 break;
                 
             default:
-                builder.AddText("I'm not sure how to help with that. Try asking about weather, sales, or performance data.");
+                // Fallback: just show data as JSON in a card
+                builder.AddCard("Data", data);
                 break;
         }
-    }
-    
-    private async Task BuildWeatherResponseAsync(GenerativeUIResponseBuilder builder, List<WeatherData>? weatherData, string userMessage)
-    {
-        if (weatherData == null || !weatherData.Any())
-        {
-            builder.AddText("I couldn't find any weather data.");
-            return;
-        }
-        
-        var latestWeather = weatherData.First();
-        
-        builder.AddText($"Here's the latest weather data for {latestWeather.Location}:");
-        
-        builder.AddComponent("weather", new
-        {
-            location = latestWeather.Location,
-            temperature = latestWeather.Temperature,
-            condition = latestWeather.Condition,
-            humidity = latestWeather.Humidity,
-            windSpeed = latestWeather.WindSpeed,
-            date = latestWeather.Date.ToString("MMM dd, yyyy")
-        });
-        
-        // Add contextual text based on conditions
-        if (latestWeather.Temperature > 80)
-        {
-            builder.AddText("It's quite warm! Stay hydrated. 🌞");
-        }
-        else if (latestWeather.Temperature < 40)
-        {
-            builder.AddText("Bundle up, it's cold outside! 🧥");
-        }
-        
-        await Task.CompletedTask;
-    }
-    
-    private async Task BuildSalesResponseAsync(GenerativeUIResponseBuilder builder, List<SalesData>? salesData, string userMessage)
-    {
-        if (salesData == null || !salesData.Any())
-        {
-            builder.AddText("I couldn't find any sales data.");
-            return;
-        }
-        
-        builder.AddText($"Here are the latest {salesData.Count} sales records:");
-        
-        builder.AddComponent("table", new
-        {
-            columns = new[] { "Product", "Amount", "Region", "Date", "Salesperson" },
-            rows = salesData.Select(s => new
-            {
-                product = s.Product,
-                amount = s.Amount,
-                region = s.Region,
-                date = s.SaleDate.ToString("MMM dd, yyyy"),
-                salesperson = s.SalesPerson != null ? $"{s.SalesPerson.FirstName} {s.SalesPerson.LastName}" : "Unknown"
-            }).ToList()
-        });
-        
-        var totalRevenue = salesData.Sum(s => s.Amount);
-        builder.AddText($"Total revenue: ${totalRevenue:N2}");
-        
-        await Task.CompletedTask;
-    }
-    
-    private async Task BuildPerformanceResponseAsync(GenerativeUIResponseBuilder builder, object? performanceData, string userMessage)
-    {
-        if (performanceData == null)
-        {
-            builder.AddText("I couldn't find any performance data.");
-            return;
-        }
-        
-        builder.AddText("Here are the top performing salespeople:");
-        
-        builder.AddComponent("chart", new
-        {
-            type = "bar",
-            data = performanceData,
-            xAxis = "salesPersonName",
-            yAxis = "totalSales",
-            title = "Sales Performance"
-        });
-        
-        builder.AddText("Great work from the team! 🎯");
         
         await Task.CompletedTask;
     }
     
     /// <summary>
-    /// Builds an interactive flow for adding data with form and confirmation
+    /// Generic card renderer - works with any single object
     /// </summary>
-    private async Task BuildAddDataFlowAsync(GenerativeUIResponseBuilder builder, string userMessage)
+    private async Task RenderCardComponentAsync(GenerativeUIResponseBuilder builder, object data)
     {
-        var lower = userMessage.ToLowerInvariant();
+        // Extract a title if possible
+        var type = data.GetType(); 
+        var title = type.Name;
         
-        // Check if this is a form submission (will contain structured data)
-        if (userMessage.Contains("FORM_SUBMIT:"))
-        {
-            // Parse form data and show confirmation
-            await BuildConfirmationFromFormAsync(builder, userMessage);
-            return;
-        }
-        
-        // Check if this is a confirmation (user clicked confirm button)
-        if (lower.Contains("confirm") && _chatHistory.Count > 2)
-        {
-            await ExecuteDataAdditionAsync(builder);
-            return;
-        }
-        
-        // If we get here, the LLM should have called a tool but didn't
-        builder.AddText("I can help you add data to the database. Try:");
-        builder.AddText("• 'add a sale' - Add a new sale record");
-        builder.AddText("• 'add a salesperson' - Add a new person to the team");
-        
+        builder.AddCard(title, data);
         await Task.CompletedTask;
     }
     
-    // Tool method for showing add sale form
-    [System.ComponentModel.Description("Shows a form to add a new sale to the database")]
-    private async Task<string> ShowAddSaleFormAsync()
-    {
-        return await Task.FromResult("SHOW_SALE_FORM");
-    }
-    
-    // Tool method for showing add person form
-    [System.ComponentModel.Description("Shows a form to add a new salesperson to the database")]
-    private async Task<string> ShowAddPersonFormAsync()
-    {
-        return await Task.FromResult("SHOW_PERSON_FORM");
-    }
-    
     /// <summary>
-    /// Builds confirmation dialog from form submission data
+    /// Generic list renderer - works with any collection
     /// </summary>
-    private async Task BuildConfirmationFromFormAsync(GenerativeUIResponseBuilder builder, string userMessage)
+    private async Task RenderListComponentAsync(GenerativeUIResponseBuilder builder, object data)
     {
-        // Extract form data (in real app, this would be properly parsed JSON)
-        var formDataStart = userMessage.IndexOf("FORM_SUBMIT:") + 12;
-        var formDataJson = userMessage.Substring(formDataStart);
-        
-        try
+        if (data is System.Collections.IEnumerable enumerable)
         {
-            var formData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(formDataJson);
-            
-            if (formData == null)
-            {
-                builder.AddText("Sorry, I couldn't parse the form data. Please try again.");
-                return;
-            }
-            
-            // Check if this is a sale or person
-            if (formData.ContainsKey("product"))
-            {
-                // Sale confirmation
-                builder.AddText("Great! Here's what you're about to add:");
-                
-                var confirmationData = new Dictionary<string, object>
-                {
-                    { "Product", formData["product"].GetString() ?? "" },
-                    { "Amount", $"${formData["amount"].GetDecimal()}" },
-                    { "Region", formData["region"].GetString() ?? "" },
-                    { "Salesperson", formData["salesperson"].GetString() ?? "" },
-                    { "Date", formData["date"].GetString() ?? "" }
-                };
-                
-                builder.AddComponent("confirmation", new
-                {
-                    title = "Add This Sale?",
-                    message = "Would you like to add this sale to the database?",
-                    confirmText = "Yes, Add Sale",
-                    cancelText = "Cancel",
-                    variant = "info",
-                    data = confirmationData
-                });
-                
-                // Store form data in chat history metadata for later use
-                _chatHistory.AddUserMessage($"PENDING_SALE:{formDataJson}");
-            }
-            else if (formData.ContainsKey("firstName"))
-            {
-                // Person confirmation
-                builder.AddText("Perfect! Review the information:");
-                
-                var confirmationData = new Dictionary<string, object>
-                {
-                    { "First Name", formData["firstName"].GetString() ?? "" },
-                    { "Last Name", formData["lastName"].GetString() ?? "" },
-                    { "Email", formData["email"].GetString() ?? "" },
-                    { "Region", formData["region"].GetString() ?? "" }
-                };
-                
-                builder.AddComponent("confirmation", new
-                {
-                    title = "Add This Person?",
-                    message = "Would you like to add this salesperson to the database?",
-                    confirmText = "Yes, Add Person",
-                    cancelText = "Cancel",
-                    variant = "info",
-                    data = confirmationData
-                });
-                
-                _chatHistory.AddUserMessage($"PENDING_PERSON:{formDataJson}");
-            }
+            var items = enumerable.Cast<object>().Take(50).ToList();
+            builder.AddList(items, layout: "grid");
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogError(ex, "Error parsing form data");
-            builder.AddText("Sorry, there was an error processing your form. Please try again.");
+            builder.AddList(new[] { data }, layout: "list");
         }
         
         await Task.CompletedTask;
     }
     
     /// <summary>
-    /// Executes the actual database addition after confirmation
+    /// Generic table renderer - dynamically extracts columns from data
     /// </summary>
-    private async Task ExecuteDataAdditionAsync(GenerativeUIResponseBuilder builder)
+    private async Task RenderTableComponentAsync(GenerativeUIResponseBuilder builder, object data)
     {
-        // Find the pending data in chat history
-        var pendingMessage = _chatHistory.LastOrDefault(m => 
-            m.Content?.Contains("PENDING_SALE:") == true || 
-            m.Content?.Contains("PENDING_PERSON:") == true);
-        
-        if (pendingMessage == null)
+        if (data is not System.Collections.IEnumerable enumerable)
         {
-            builder.AddText("I couldn't find the pending data. Please start over.");
+            builder.AddText("Unable to render table: data is not a collection");
             return;
         }
         
-        try
+        var items = enumerable.Cast<object>().ToList();
+        if (items.Count == 0)
         {
-            if (pendingMessage.Content!.Contains("PENDING_SALE:"))
+            builder.AddText("No data to display");
+            return;
+        }
+        
+        // Extract columns from first item
+        var firstItem = items[0];
+        var properties = firstItem.GetType().GetProperties();
+        var columns = properties
+            .Where(p => p.PropertyType.IsPrimitive || 
+                       p.PropertyType == typeof(string) || 
+                       p.PropertyType == typeof(decimal) ||
+                       p.PropertyType == typeof(DateTime))
+            .Select(p => new { name = p.Name, label = p.Name })
+            .ToArray();
+        
+        // Extract rows
+        var rows = items.Select(item =>
+        {
+            var row = new Dictionary<string, object?>();
+            foreach (var prop in properties)
             {
-                var jsonStart = pendingMessage.Content.IndexOf("PENDING_SALE:") + 13;
-                var jsonData = pendingMessage.Content.Substring(jsonStart);
-                var formData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(jsonData);
-                
-                if (formData != null)
+                if (columns.Any(c => c.name == prop.Name))
                 {
-                    // Find or create salesperson
-                    var email = formData["salesperson"].GetString();
-                    var salesperson = await _dbContext.People
-                        .FirstOrDefaultAsync(p => p.Email == email);
-                    
-                    if (salesperson == null)
-                    {
-                        builder.AddText($"⚠️ Salesperson with email {email} not found. Please add them first.");
-                        return;
-                    }
-                    
-                    // Create sale
-                    var sale = new SalesData
-                    {
-                        Product = formData["product"].GetString() ?? "",
-                        Amount = formData["amount"].GetDecimal(),
-                        Region = formData["region"].GetString() ?? "",
-                        SaleDate = DateTime.Parse(formData["date"].GetString() ?? DateTime.Today.ToString()),
-                        SalesPersonId = salesperson.Id
-                    };
-                    
-                    _dbContext.SalesData.Add(sale);
-                    await _dbContext.SaveChangesAsync();
-                    
-                    builder.AddText("✅ Sale added successfully!");
-                    
-                    // Show the added sale in a table
-                    builder.AddComponent("table", new
-                    {
-                        columns = new[] { "Product", "Amount", "Region", "Date", "Salesperson" },
-                        rows = new[]
-                        {
-                            new
-                            {
-                                product = sale.Product,
-                                amount = sale.Amount,
-                                region = sale.Region,
-                                date = sale.SaleDate.ToString("MMM dd, yyyy"),
-                                salesperson = $"{salesperson.FirstName} {salesperson.LastName}"
-                            }
-                        }
-                    });
+                    var value = prop.GetValue(item);
+                    row[prop.Name] = value;
                 }
             }
-            else if (pendingMessage.Content.Contains("PENDING_PERSON:"))
-            {
-                var jsonStart = pendingMessage.Content.IndexOf("PENDING_PERSON:") + 15;
-                var jsonData = pendingMessage.Content.Substring(jsonStart);
-                var formData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(jsonData);
-                
-                if (formData != null)
-                {
-                    var person = new Person
-                    {
-                        FirstName = formData["firstName"].GetString() ?? "",
-                        LastName = formData["lastName"].GetString() ?? "",
-                        Email = formData["email"].GetString() ?? "",
-                        Region = formData["region"].GetString() ?? ""
-                    };
-                    
-                    _dbContext.People.Add(person);
-                    await _dbContext.SaveChangesAsync();
-                    
-                    builder.AddText("✅ Salesperson added successfully!");
-                    
-                    builder.AddComponent("table", new
-                    {
-                        columns = new[] { "Name", "Email", "Region" },
-                        rows = new[]
-                        {
-                            new
-                            {
-                                name = $"{person.FirstName} {person.LastName}",
-                                email = person.Email,
-                                region = person.Region
-                            }
-                        }
-                    });
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error adding data to database");
-            builder.AddText($"❌ Error: {ex.Message}");
-        }
+            return row;
+        }).ToArray();
+        
+        builder.AddTable(columns, rows, sortable: true);
+        await Task.CompletedTask;
     }
     
     /// <summary>
-    /// Internal class for query analysis
+    /// Generic chart renderer - determines chart type based on data
     /// </summary>
-    private class QueryAnalysis
+    private async Task RenderChartComponentAsync(GenerativeUIResponseBuilder builder, object data, QueryIntent intent)
     {
-        public string QueryType { get; set; } = "general";
-        public string? Location { get; set; }
-        public string? Timeframe { get; set; }
-        public Dictionary<string, object>? Filters { get; set; }
+        if (data is not System.Collections.IEnumerable enumerable)
+        {
+            builder.AddText("Unable to render chart: data is not a collection");
+            return;
+        }
+        
+        var items = enumerable.Cast<object>().ToList();
+        if (items.Count == 0)
+        {
+            builder.AddText("No data to visualize");
+            return;
+        }
+        
+        // Determine chart type based on data structure
+        var firstItem = items[0];
+        var properties = firstItem.GetType().GetProperties();
+        
+        // Find numeric and label fields
+        var numericProp = properties.FirstOrDefault(p => 
+            p.PropertyType == typeof(int) || 
+            p.PropertyType == typeof(decimal) || 
+            p.PropertyType == typeof(double));
+        
+        var labelProp = properties.FirstOrDefault(p => p.PropertyType == typeof(string));
+        
+        if (numericProp != null && labelProp != null)
+        {
+            var chartType = intent.Type == QueryIntentType.Compare ? "bar" : "line";
+            
+            builder.AddChart(
+                chartType: chartType,
+                data: items,
+                xAxis: labelProp.Name,
+                yAxis: numericProp.Name,
+                title: $"{numericProp.Name} by {labelProp.Name}"
+            );
+        }
+        else
+        {
+            // Fallback to table if can't determine chart structure
+            await RenderTableComponentAsync(builder, data);
+        }
+        
+        await Task.CompletedTask;
     }
+    
+    /// <summary>
+    /// Builds a form to add a new sale with embedded submit action
+    /// </summary>
+    private async Task BuildAddSaleFormAsync(GenerativeUIResponseBuilder builder)
+    {
+        // Get available salespeople for the dropdown
+        var salespeople = await _dbContext.People
+            .Select(p => new { p.Email, Name = $"{p.FirstName} {p.LastName}" })
+            .ToListAsync();
+        
+        builder.AddText("Fill out the form below to add a new sale:");
+        
+        var fields = new object[]
+        {
+            new
+            {
+                name = "product",
+                label = "Product",
+                type = "select",
+                required = true,
+                options = new[] { "Laptop Pro 15", "Mechanical Keyboard", "Wireless Mouse", "Webcam HD", "USB-C Hub" }
+            },
+            new
+            {
+                name = "amount",
+                label = "Sale Amount ($)",
+                type = "number",
+                placeholder = "1299.99",
+                required = true
+            },
+            new
+            {
+                name = "region",
+                label = "Region",
+                type = "select",
+                required = true,
+                options = new[] { "North America", "Europe", "Asia Pacific", "South America" }
+            },
+            new
+            {
+                name = "salespersonEmail",
+                label = "Salesperson",
+                type = "select",
+                required = true,
+                options = salespeople.Select(s => s.Email).ToArray()
+            },
+            new
+            {
+                name = "date",
+                label = "Sale Date",
+                type = "date",
+                required = true,
+                defaultValue = DateTime.Today.ToString("yyyy-MM-dd")
+            }
+        };
+        
+        // The action contains everything needed to create the sale - STATELESS!
+        builder.AddForm(
+            title: "Add New Sale",
+            description: "Enter the sale details below",
+            fields: fields,
+            onSubmitAction: new ComponentAction
+            {
+                Endpoint = "/api/actions/sales",
+                Method = "POST",
+                ConfirmMessage = "Are you sure you want to add this sale?"
+            },
+            submitText: "Add Sale"
+        );
+        
+        await Task.CompletedTask;
+    }
+    
+    /// <summary>
+    /// Builds a form to add a new salesperson with embedded submit action
+    /// </summary>
+    private async Task BuildAddPersonFormAsync(GenerativeUIResponseBuilder builder)
+    {
+        builder.AddText("Fill out the form below to add a new salesperson:");
+        
+        var fields = new object[]
+        {
+            new
+            {
+                name = "firstName",
+                label = "First Name",
+                type = "text",
+                placeholder = "John",
+                required = true
+            },
+            new
+            {
+                name = "lastName",
+                label = "Last Name",
+                type = "text",
+                placeholder = "Smith",
+                required = true
+            },
+            new
+            {
+                name = "email",
+                label = "Email",
+                type = "email",
+                placeholder = "john.smith@company.com",
+                required = true
+            },
+            new
+            {
+                name = "region",
+                label = "Region",
+                type = "select",
+                required = true,
+                options = new[] { "North America", "Europe", "Asia Pacific", "South America" }
+            }
+        };
+        
+        // The action contains everything needed - STATELESS!
+        builder.AddForm(
+            title: "Add New Salesperson",
+            description: "Enter the person's details below",
+            fields: fields,
+            onSubmitAction: new ComponentAction
+            {
+                Endpoint = "/api/actions/people",
+                Method = "POST",
+                ConfirmMessage = "Are you sure you want to add this person?"
+            },
+            submitText: "Add Person"
+        );
+        
+        await Task.CompletedTask;
+    }
+    
 }
