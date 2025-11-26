@@ -1,5 +1,4 @@
 using System.Text.Json;
-using FogData.Models.GenerativeUI;
 
 namespace FogData.Services.GenerativeUI;
 
@@ -27,7 +26,7 @@ public class GenerativeUIResponseBuilder
         { 
             Message = message, 
             Status = status,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow.ToString("o")
         });
     }
     
@@ -69,18 +68,24 @@ public class GenerativeUIResponseBuilder
     
     /// <summary>
     /// Adds a component block with actions (for interactive components like forms, confirmations)
+    /// Actions are merged into props since frontend passes all props to components
     /// </summary>
     /// <param name="componentType">Type of component</param>
     /// <param name="props">Component properties</param>
     /// <param name="actions">Actions that can be triggered by user interaction</param>
     public void AddComponentWithActions(string componentType, object props, ComponentActions actions)
     {
-        var propsJson = JsonSerializer.SerializeToElement(props, _jsonOptions);
+        // Merge actions into props for frontend compatibility
+        var propsWithActions = new Dictionary<string, object?>
+        {
+            ["props"] = props,
+            ["actions"] = actions
+        };
+        var propsJson = JsonSerializer.SerializeToElement(propsWithActions, _jsonOptions);
         _response.Content.Add(new ComponentBlock 
         { 
             ComponentType = componentType,
-            Props = propsJson,
-            Actions = actions
+            Props = propsJson
         });
     }
     

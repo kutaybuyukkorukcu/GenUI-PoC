@@ -53,7 +53,9 @@ export const TableRenderer = ({ columns, rows }: TableRendererProps) => {
                       const isAmount = colLower.includes('amount') || colLower.includes('price');
                       const displayValue = isAmount && typeof value === 'number' 
                         ? `$${value.toLocaleString()}` 
-                        : value;
+                        : typeof value === 'object' 
+                          ? JSON.stringify(value)
+                          : String(value ?? '');
 
                       return (
                         <td 

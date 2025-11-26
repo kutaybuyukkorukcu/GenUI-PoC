@@ -5,14 +5,12 @@ import { ConfirmationDialog } from './ConfirmationDialog';
 import { FormRenderer } from './FormRenderer';
 import { ListRenderer } from './ListRenderer';
 import { TableRenderer } from './TableRenderer';
-import { WeatherCard } from './WeatherCard';
 
 /**
  * Registry mapping component types to their React implementations.
  * This enables dynamic component rendering based on componentType from the backend.
  * 
- * Generic components (card, list, table, chart) work with any data domain.
- * Domain-specific components (weather) are kept for backward compatibility.
+ * All components are generic and work with any data domain.
  */
 const COMPONENT_REGISTRY: Record<string, React.ComponentType<unknown>> = {
   // Generic components - work with any data
@@ -24,9 +22,6 @@ const COMPONENT_REGISTRY: Record<string, React.ComponentType<unknown>> = {
   // Interactive components
   form: FormRenderer as React.ComponentType<unknown>,
   confirmation: ConfirmationDialog as React.ComponentType<unknown>,
-  
-  // Legacy/domain-specific components (backward compatibility)
-  weather: WeatherCard as React.ComponentType<unknown>,
 };
 
 interface DynamicComponentProps {

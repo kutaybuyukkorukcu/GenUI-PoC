@@ -10,23 +10,12 @@ public class FogDataDbContext : DbContext
     {
     }
 
-    public DbSet<WeatherData> WeatherData { get; set; }
     public DbSet<SalesData> SalesData { get; set; }
     public DbSet<Person> People { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-
-        // Configure WeatherData
-        modelBuilder.Entity<WeatherData>(entity =>
-        {
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Location).IsRequired().HasMaxLength(100);
-            entity.Property(e => e.Condition).IsRequired().HasMaxLength(50);
-            entity.HasIndex(e => e.Date);
-            entity.HasIndex(e => e.Location);
-        });
 
         // Configure SalesData
         modelBuilder.Entity<SalesData>(entity =>
