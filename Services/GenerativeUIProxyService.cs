@@ -25,81 +25,24 @@ public class GenerativeUIProxyService : IGenerativeUIService
     private readonly IConfiguration _configuration;
     private readonly ILogger<GenerativeUIProxyService> _logger;
     private readonly UIResponseParser _responseParser;
-    private readonly Dictionary<string, ChatHistory> _sessions = new();
     
+    /// <summary>
+    /// Constructor with full DI support.
+    /// Kernel can be configured externally (e.g., with MCP tools) and injected.
+    /// </summary>
     public GenerativeUIProxyService(
+        Kernel kernel,
+        UIResponseParser responseParser,
         IConfiguration configuration,
         ILogger<GenerativeUIProxyService> logger)
     {
+        _kernel = kernel;
+        _responseParser = responseParser;
         _configuration = configuration;
         _logger = logger;
         
-        // Initialize Semantic Kernel
-        _kernel = CreateKernel(configuration);
-        
-        // Initialize response parser
-        var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
-        _responseParser = new UIResponseParser(loggerFactory.CreateLogger<UIResponseParser>());
-    }
-    
-    /// <summary>
-    /// Creates and configures the Semantic Kernel based on provider settings
-    /// </summary>
-    private Kernel CreateKernel(IConfiguration configuration)
-    {
-        var builder = Kernel.CreateBuilder();
-        
-        var provider = configuration["SemanticKernel:Provider"];
-        _logger.LogInformation("Initializing GenerativeUIProxyService with provider: {Provider}", provider);
-        
-        switch (provider)
-        {
-            case "OpenAI":
-                ConfigureOpenAI(builder, configuration);
-                break;
-            case "AzureOpenAI":
-                ConfigureAzureOpenAI(builder, configuration);
-                break;
-            case "Anthropic":
-                // TODO: Add Anthropic support via connector
-                _logger.LogWarning("Anthropic not yet implemented, falling back to OpenAI");
-                ConfigureOpenAI(builder, configuration);
-                break;
-            case "Gemini":
-                // TODO: Add Gemini support via connector
-                _logger.LogWarning("Gemini not yet implemented, falling back to OpenAI");
-                ConfigureOpenAI(builder, configuration);
-                break;
-            default:
-                _logger.LogWarning("Unknown provider {Provider}, using OpenAI", provider);
-                ConfigureOpenAI(builder, configuration);
-                break;
-        }
-        
-        return builder.Build();
-    }
-    
-    private void ConfigureOpenAI(IKernelBuilder builder, IConfiguration configuration)
-    {
-        var apiKey = configuration["SemanticKernel:OpenAI:ApiKey"];
-        var modelId = configuration["SemanticKernel:OpenAI:ModelId"] ?? "gpt-4o-mini";
-        
-        if (!string.IsNullOrEmpty(apiKey))
-        {
-            builder.AddOpenAIChatCompletion(modelId, apiKey);
-        }
-    }
-    
-    private void ConfigureAzureOpenAI(IKernelBuilder builder, IConfiguration configuration)
-    {
-        var endpoint = configuration["SemanticKernel:AzureOpenAI:Endpoint"];
-        var apiKey = configuration["SemanticKernel:AzureOpenAI:ApiKey"];
-        var deploymentName = configuration["SemanticKernel:AzureOpenAI:DeploymentName"];
-        
-        if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(apiKey))
-        {
-            builder.AddAzureOpenAIChatCompletion(deploymentName!, endpoint, apiKey);
-        }
+        _logger.LogInformation("GenerativeUIProxyService initialized with provider: {Provider}", 
+            configuration["SemanticKernel:Provider"]);
     }
 
     
