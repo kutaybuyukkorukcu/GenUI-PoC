@@ -1,50 +1,36 @@
-version: '3.8'
-
 # Development overrides - only used when running `docker-compose up` (not in production)
 services:
-  postgres:
-    ports:
-      - "5432:5432"  # Expose for local DB tools
-
   backend:
-    # Override the production build with development setup
     build:
       context: .
-      dockerfile: Dockerfile.dev  # We'll create this
+      dockerfile: Dockerfile.dev
     ports:
-      - "5001:8080"  # Keep same external port as production
+      - "5001:8080"
     volumes:
-      # Mount source code for hot reload
       - .:/src
       - /src/bin
       - /src/obj
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
-      - DOTNET_USE_POLLING_FILE_WATCHER=1  # Better file watching in containers
-      - ConnectionStrings__DefaultConnection=Host=postgres;Database=fogdata;Username=fogdata_user;Password=fogdata_password
-      - SemanticKernel__Provider=${SEMANTIC_KERNEL_PROVIDER:-AzureOpenAI}
-      - SemanticKernel__OpenAI__ApiKey=${OPENAI_API_KEY}
-      - SemanticKernel__OpenAI__ModelId=${OPENAI_MODEL_ID:-gpt-4o-mini}
-      - SemanticKernel__AzureOpenAI__Endpoint=${AZURE_OPENAI_ENDPOINT}
-      - SemanticKernel__AzureOpenAI__ApiKey=${AZURE_OPENAI_API_KEY}
-      - SemanticKernel__AzureOpenAI__DeploymentName=${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4.1-mini}
-      - SemanticKernel__Ollama__Endpoint=${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
-      - SemanticKernel__Ollama__ModelId=${OLLAMA_MODEL_ID:-llama3.2}
+      - DOTNET_USE_POLLING_FILE_WATCHER=1
+      - SEMANTIC_KERNEL_PROVIDER=${SEMANTIC_KERNEL_PROVIDER:-AzureOpenAI}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4.1-mini}
     command: ["dotnet", "watch", "run", "--urls", "http://+:8080"]
 
   frontend:
-    # Override with development server
     build:
       context: ./client
-      dockerfile: Dockerfile.dev  # We'll create this
+      dockerfile: Dockerfile.dev
     volumes:
-      # Mount source code for hot reload
       - ./client:/app
-      - /app/node_modules  # Don't mount node_modules
+      - /app/node_modules
     ports:
-      - "5173:5173"  # Vite dev server port
+      - "5173:5173"
     environment:
       - NODE_ENV=development
-      - DOCKER_CONTAINER=true  # Signal that we're running in Docker
+      - DOCKER_CONTAINER=true
     command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

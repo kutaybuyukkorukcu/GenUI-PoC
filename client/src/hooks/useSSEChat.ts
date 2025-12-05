@@ -1,4 +1,4 @@
-import { ChatMessage, GenerativeUIResponse } from '../types';
+import { ChatMessage, GenerativeUIResponse, UsageInfo } from '../types';
 import { useCallback, useState } from 'react';
 
 import { chatWithAgentSSE } from '../services/api';
@@ -6,6 +6,19 @@ import { chatWithAgentSSE } from '../services/api';
 export const useSSEChat = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [lastUsage, setLastUsage] = useState<UsageInfo | null>(null);
+  const [totalUsage, setTotalUsage] = useState<UsageInfo>({
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    estimatedCost: {
+      promptCost: 0,
+      completionCost: 0,
+      totalCost: 0,
+      currency: 'USD',
+      model: ''
+    }
+  });
 
   const sendMessage = useCallback(async (content: string) => {
     // Add user message
@@ -93,12 +106,41 @@ export const useSSEChat = () => {
           return updated;
         });
         setIsLoading(false);
+      },
+      // Usage callback
+      (usage) => {
+        setLastUsage(usage);
+        setTotalUsage((prev) => ({
+          promptTokens: prev.promptTokens + usage.promptTokens,
+          completionTokens: prev.completionTokens + usage.completionTokens,
+          totalTokens: prev.totalTokens + usage.totalTokens,
+          estimatedCost: {
+            promptCost: (prev.estimatedCost?.promptCost ?? 0) + (usage.estimatedCost?.promptCost ?? 0),
+            completionCost: (prev.estimatedCost?.completionCost ?? 0) + (usage.estimatedCost?.completionCost ?? 0),
+            totalCost: (prev.estimatedCost?.totalCost ?? 0) + (usage.estimatedCost?.totalCost ?? 0),
+            currency: usage.estimatedCost?.currency ?? 'USD',
+            model: usage.estimatedCost?.model ?? ''
+          }
+        }));
       }
     );
   }, []);
 
   const clearMessages = useCallback(() => {
     setMessages([]);
+    setLastUsage(null);
+    setTotalUsage({
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      estimatedCost: {
+        promptCost: 0,
+        completionCost: 0,
+        totalCost: 0,
+        currency: 'USD',
+        model: ''
+      }
+    });
   }, []);
 
   return {
@@ -106,5 +148,7 @@ export const useSSEChat = () => {
     sendMessage,
     isLoading,
     clearMessages,
+    lastUsage,
+    totalUsage,
   };
 };

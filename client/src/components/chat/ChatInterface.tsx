@@ -5,10 +5,11 @@ import { ChatInput } from './ChatInput';
 import { MessageList } from './MessageList';
 import { ScrollArea } from '../ui/scroll-area';
 import { Trash2 } from 'lucide-react';
+import { UsageDisplay } from './UsageDisplay';
 import { useSSEChat } from '../../hooks/useSSEChat';
 
 export const ChatInterface = () => {
-  const { messages, sendMessage, isLoading, clearMessages } = useSSEChat();
+  const { messages, sendMessage, isLoading, clearMessages, lastUsage, totalUsage } = useSSEChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,6 +84,9 @@ export const ChatInterface = () => {
         <div className="border-t p-4">
           <ChatInput onSend={sendMessage} isLoading={isLoading} />
         </div>
+        
+        {/* Usage Display */}
+        <UsageDisplay lastUsage={lastUsage} totalUsage={totalUsage} />
       </div>
     </div>
   );

@@ -28,7 +28,22 @@ public class ThinkingItem
 public class ContentBlock
 {
     public string Type { get; set; } = "text"; // "text" or "component"
+    
+    /// <summary>
+    /// For "text" type: the text value
+    /// For "component" type: not used (see ComponentType and Props)
+    /// </summary>
     public object? Value { get; set; }
+    
+    /// <summary>
+    /// For "component" type: the component type (card, table, chart, etc.)
+    /// </summary>
+    public string? ComponentType { get; set; }
+    
+    /// <summary>
+    /// For "component" type: the component props
+    /// </summary>
+    public object? Props { get; set; }
 }
 
 /// <summary>

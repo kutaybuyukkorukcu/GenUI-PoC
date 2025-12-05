@@ -99,3 +99,22 @@ export interface ConfirmationProps {
   variant?: 'info' | 'warning' | 'danger';
   data?: unknown;
 }
+
+// ============================================
+// Usage & Cost Tracking Types
+// ============================================
+
+export interface CostInfo {
+  promptCost: number;
+  completionCost: number;
+  totalCost: number;
+  currency: string;
+  model: string;
+}
+
+export interface UsageInfo {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  estimatedCost?: CostInfo;
+}

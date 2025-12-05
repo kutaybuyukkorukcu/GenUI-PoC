@@ -1,66 +1,45 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: fogdata-postgres
-    environment:
-      POSTGRES_DB: fogdata
-      POSTGRES_USER: fogdata_user
-      POSTGRES_PASSWORD: fogdata_password
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - fogdata-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fogdata_user -d fogdata"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: fogdata-backend
+    container_name: genui-backend
     ports:
-      - "5001:8080"  # Changed from 5000 to 5001
+      - "5001:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
-      - ConnectionStrings__DefaultConnection=Host=postgres;Database=fogdata;Username=fogdata_user;Password=fogdata_password
-    depends_on:
-      postgres:
-        condition: service_healthy
+      # LLM Configuration (from .env)
+      - SEMANTIC_KERNEL_PROVIDER=${SEMANTIC_KERNEL_PROVIDER}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME}
     networks:
-      - fogdata-network
+      - genui-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/weatherforecast"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 10s
 
   frontend:
     build:
       context: ./client
       dockerfile: Dockerfile
-    container_name: fogdata-frontend
+    container_name: genui-frontend
     ports:
-      - "3001:80"  # Changed from 3000 to 3001
+      - "3001:80"
     depends_on:
       - backend
     networks:
-      - fogdata-network
+      - genui-network
     environment:
       - NODE_ENV=production
 
 networks:
-  fogdata-network:
+  genui-network:
     driver: bridge
-
-volumes:
-  fogdata-data:
-  postgres_data:

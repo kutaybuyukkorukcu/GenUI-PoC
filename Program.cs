@@ -1,59 +1,50 @@
-using FogData.Services;
 using FogData.Services.GenerativeUI;
-using Microsoft.SemanticKernel;
+using GenUI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Load .env file for local development
+var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+if (File.Exists(envPath))
+{
+    foreach (var line in File.ReadAllLines(envPath))
+    {
+        if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#")) continue;
+        var parts = line.Split('=', 2);
+        if (parts.Length == 2)
+        {
+            Environment.SetEnvironmentVariable(parts[0].Trim(), parts[1].Trim());
+        }
+    }
+}
 
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
-// Register Semantic Kernel via DI
-builder.Services.AddSingleton<Kernel>(sp =>
-{
-    var configuration = sp.GetRequiredService<IConfiguration>();
-    var kernelBuilder = Kernel.CreateBuilder();
-    
-    var provider = configuration["SemanticKernel:Provider"];
-    
-    switch (provider)
-    {
-        case "OpenAI":
-            var openAiKey = configuration["SemanticKernel:OpenAI:ApiKey"];
-            var openAiModel = configuration["SemanticKernel:OpenAI:ModelId"] ?? "gpt-4o-mini";
-            if (!string.IsNullOrEmpty(openAiKey))
-                kernelBuilder.AddOpenAIChatCompletion(openAiModel, openAiKey);
-            break;
-            
-        case "AzureOpenAI":
-        default:
-            var endpoint = configuration["SemanticKernel:AzureOpenAI:Endpoint"];
-            var apiKey = configuration["SemanticKernel:AzureOpenAI:ApiKey"];
-            var deployment = configuration["SemanticKernel:AzureOpenAI:DeploymentName"];
-            if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(apiKey))
-                kernelBuilder.AddAzureOpenAIChatCompletion(deployment!, endpoint, apiKey);
-            break;
-    }
-    
-    return kernelBuilder.Build();
-});
+// ============================================
+// GenUI BYOK Services
+// ============================================
 
-// Register UIResponseParser via DI
+// Kernel Factory - creates LLM kernels from user's API keys at runtime
+builder.Services.AddSingleton<IKernelFactory, KernelFactory>();
+
+// UI Response Parser - extracts structured UI from LLM responses
 builder.Services.AddSingleton<UIResponseParser>();
 
-// Add Generative UI Service - pure LLM middleware, no database dependency
-builder.Services.AddScoped<IGenerativeUIService, GenerativeUIProxyService>();
+// Token Cost Calculator - calculates usage and cost per request
+builder.Services.AddSingleton<TokenCostCalculator>();
 
-// Add HttpClient for external API calls (web search, etc.)
+// Add HttpClient for external API calls
 builder.Services.AddHttpClient();
 
-// Add CORS
+// Add CORS - allow any origin for API usage
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowReactApp",
+    options.AddPolicy("AllowAll",
         policy =>
         {
-            policy.WithOrigins("http://localhost:5173") // Vite default port
+            policy.AllowAnyOrigin()
                   .AllowAnyHeader()
                   .AllowAnyMethod();
         });
@@ -61,20 +52,35 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-    app.UseCors("AllowReactApp");
-}
-else
-{
-    // Serve React static files in production
-    app.UseDefaultFiles();
-    app.UseStaticFiles();
-}
+// Always enable CORS for API
+app.UseCors("AllowAll");
 
 app.UseHttpsRedirection();
 app.MapControllers();
+
+// Health check endpoint
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.0.0" }));
+
+// API info endpoint
+app.MapGet("/", () => Results.Ok(new
+{
+    name = "GenUI API",
+    version = "1.0.0",
+    description = "OpenAI-compatible API with Generative UI capabilities",
+    endpoints = new
+    {
+        chatCompletions = "POST /v1/chat/completions",
+        health = "GET /health"
+    },
+    headers = new
+    {
+        required = new[] { "X-LLM-API-Key: Your OpenAI/Azure API key" },
+        optional = new[] {
+            "X-LLM-Provider: openai | azure",
+            "X-Azure-Endpoint: Azure OpenAI endpoint URL",
+            "X-Azure-Deployment: Azure deployment name"
+        }
+    }
+}));
 
 app.Run();
